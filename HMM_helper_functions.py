@@ -8,6 +8,21 @@ import h5py
 import glob
 import os
 
+
+def create_HMM_QP_statistics_plots(hdf5_file):
+    create_mean_occupation_plot(hdf5_file)
+    create_transition_lifetimes_plot(hdf5_file)
+    create_transition_probability_plot(hdf5_file)
+
+def create_mean_occupation_plot(hdf5_file):
+    raise NotImplementedError()
+
+def create_transition_probability_plot(hdf5_file):
+    raise NotImplementedError()
+
+def create_transition_lifetimes_plot(hdf5_file):
+    raise NotImplementedError()
+
 def create_path(target_path):
     if not os.path.exists(target_path):
         os.makedirs(target_path)

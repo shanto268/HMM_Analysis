@@ -39,6 +39,7 @@ class AlazarPowerSweep:
         self.numModes = None
         self.metainfo = None
         self.HMM = None
+        self.hdf5_file = None
 
     def set_attenuation_configuration(self):
         atten_config = json.load(open("attenuation.json"))
@@ -139,6 +140,7 @@ class AlazarPowerSweep:
 
             print(f"attenuation: {atten}")
             savefile = os.path.join(self.project_path,'powerSweep','AnalyisResults',f'FullDataset.hdf5')
+            self.hdf5_file = savefile
             if not os.path.exists(os.path.split(savefile)[0]):
                 os.makedirs(os.path.split(savefile)[0])
             figpath = os.path.join(self.figure_path, f'ATTEN{atten}')
@@ -282,7 +284,6 @@ class AlazarPowerSweep:
             # also note that skip has no meaning anymore. the variable index found from power = -127 has taken on the same role
             ##################
             with h5py.File(savefile,'a') as ff:
-        #         f = ff[f'ATTEN{atten}']
                 fp = ff.require_group(f'ATTEN{atten}')
                 fp.create_dataset('Q',data = Q)
                 fp.create_dataset('data',data = data)
@@ -291,7 +292,10 @@ class AlazarPowerSweep:
                 fp.attrs.create('mean',Qmean)
                 fp.attrs.create('P0',P0)
                 fp.attrs.create('P1',P1)
-                fp.attrs.create('P2',P2)
+                try:
+                    fp.attrs.create('P2',P2)
+                except:
+                    pass
                 fp.attrs.create('SNRs',SNRs)
                 fp.attrs.create('downsampleRateMHz',sr)
                 fp.attrs.create('HMMmeans_',M.means_)
@@ -300,6 +304,7 @@ class AlazarPowerSweep:
                 fp.attrs.create('HMMtransmat_',M.transmat_)
                 fp.attrs.create('LOpower',self.power_to_device[i+skip])
                 fp.attrs.create('DAsetting',self.attens[i+skip])
+
                 for key in metainfo:
                     fp.attrs.create(key,metainfo[key])
 
@@ -308,3 +313,5 @@ class AlazarPowerSweep:
             covars= np.copy(M.covars_)
 
         self.HMM = HMM
+
+        create_HMM_QP_statistics_plots(self.hdf5_file)
