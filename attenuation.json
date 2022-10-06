@@ -1,0 +1,9 @@
+{
+  "LO_power" : 20,
+  "Splitter" : -3,
+  "Fixed_attenuator_1": -20,
+  "Fixed_attenuator_2": -30,
+  "DA_fixed": -10,
+  "Fridge_attenuation": -75,
+  "Ecosorb": -3
+}
