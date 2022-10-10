@@ -6,9 +6,7 @@ Program : HMM_Analysis/AlazarPowerSweep.py
 Summary:
 
 To Do:
-    0) SampleRate from hdf5 file
-    1) MetaData from hdf5 file
-    2) automate choosing of attenuation beyond which the resonator goes non-linear
+    1) automate choosing of attenuation beyond which the resonator goes non-linear
 """
 __author__ =  "Sadman Ahmed Shanto"
 __date__ = "10/06/2022"
@@ -21,13 +19,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 import fitTools.quasiparticleFunctions as qp
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from matplotlib.backends.backend_pdf import PdfPages
 import h5py
 import glob
 import json
+import os
 from HMM_helper_functions import *
 
 
-class AlazarPowerSweep:
+class AlazarPowerSweepData:
 
     def __init__(self, project_path):
         self.project_path = project_path
@@ -65,7 +65,7 @@ class AlazarPowerSweep:
 
     def get_initial_QP_means(self, sampleRateFromData, avgTime=3):
         data = qp.loadAlazarData(self.files[self.index])
-        data, sr = qp.BoxcarDownsample(data, avgTime, sampleRate=sampleRateFromData, returnRate=True) 
+        data, sr = qp.BoxcarDownsample(data, avgTime, sampleRate=sampleRateFromData, returnRate=True)
         data = qp.uint16_to_mV(data)
 
         create_IQ_plot(data)
@@ -107,11 +107,10 @@ class AlazarPowerSweep:
         create_path(self.figure_path)
         self.files, self.attens = sort_files_ascending_attenuation(self.files)
         set_plot_style()
-        sampleRateFromData = int(input("\nSample Rate from Alazar Data: "))
+        sampleRateFromData = get_sample_rate_from_run(self.files[0])
 
-        create_IQ_downsampled_plots(self.files, avgTime, sampleRateFromData)
+        create_IQ_downsampled_plots(self.files, self.project_path, avgTime, sampleRateFromData)
 
-        print("\nPlease review the downsampled IQ plots")
         chosenAtten = int(input("\nAttenuation below which the system goes non-linear: "))
         self.power_to_device = self.set_attenuation_configuration()
 
@@ -134,6 +133,9 @@ class AlazarPowerSweep:
         #######################################3
         # original code used i,file in enumerate(files). There are still some dependencies on i in the code below
         #########################################
+        hmm_fits_pdf = PdfPages('{}/HMM_IQ_fits.pdf'.format(self.project_path))
+        hmm_time_series_pdf = PdfPages('{}/HMM_time_series.pdf'.format(self.project_path))
+
         for i,atten,file in zip(np.arange(len(self.attens[self.index:])),self.attens[self.index:],self.files[self.index:]):
 
             metainfo = self.metainfo
@@ -260,6 +262,7 @@ class AlazarPowerSweep:
             plt.ylabel('Q [mV]')
             plt.title('HMM fit | {:.2} MHz | {} dBm'.format(sr,self.power_to_device[i+skip]))
             plt.savefig(os.path.join(figpath,'HMMfits_{}_{}dBm.png'.format(i+skip,self.power_to_device[i+skip])))
+            hmm_fits_pdf.savefig(plt.gcf())
             plt.close()
 
             # extract occupation
@@ -273,6 +276,7 @@ class AlazarPowerSweep:
             fig, ax = qp.plotTimeSeries(data,Q,np.arange(Q.size)/sr,1500,2000,zeroTime=True)
             plt.title('{:.2} MHz | {} dBm'.format(sr,self.power_to_device[i+skip]))
             plt.savefig(os.path.join(figpath,'TimeSeries__{}_{}dBm.png'.format(i+skip,self.power_to_device[i+skip])))
+            hmm_time_series_pdf.savefig(plt.gcf())
             plt.close()
 
             # get the transition rates
@@ -312,6 +316,14 @@ class AlazarPowerSweep:
             means= np.copy(M.means_)
             covars= np.copy(M.covars_)
 
+        hmm_fits_pdf.close()
+        hmm_time_series_pdf.close()
         self.HMM = HMM
+
+        fdir = os.path.join(self.project_path,'powerSweep','AnalyisResults')
+        try:
+            pickle_HMM((HMM,fdir))
+        except:
+            pass
 
         create_HMM_QP_statistics_plots(self.hdf5_file)
