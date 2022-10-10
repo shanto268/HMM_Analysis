@@ -1,12 +1,44 @@
-
+import subprocess
 from hmmlearn import hmm
 import numpy as np
 import matplotlib.pyplot as plt
 import fitTools.quasiparticleFunctions as qp
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from matplotlib.backends.backend_pdf import PdfPages
 import h5py
 import glob
 import os
+import pickle
+import json
+
+
+def pickle_HMM(HMM, fdir):
+    for i,M in enumerate(HMM):
+        fp = r"{}\\HMM_DA_index_{}.pkl".format(fdir, i)
+        path,fname = os.path.split(fp)
+        if not os.path.exists(path):
+            os.makedirs(path)
+        with open(fp,'wb') as f:
+            pickle.dump(M,f)
+
+
+def get_sample_rate_from_run(file):
+    file = file.split(".")[0] + ".json"
+    return int(json.load(open(file))["sample_rate_MHz"])
+
+def create_HMM_QP_statistics_plots(hdf5_file):
+    create_mean_occupation_plot(hdf5_file)
+    create_transition_lifetimes_plot(hdf5_file)
+    create_transition_probability_plot(hdf5_file)
+
+def create_mean_occupation_plot(hdf5_file):
+    raise NotImplementedError()
+
+def create_transition_probability_plot(hdf5_file):
+    raise NotImplementedError()
+
+def create_transition_lifetimes_plot(hdf5_file):
+    raise NotImplementedError()
 
 def create_path(target_path):
     if not os.path.exists(target_path):
@@ -52,10 +84,10 @@ def sort_files_ascending_attenuation(files):
 
 
 
-def create_IQ_downsampled_plots(files, avgTime=2, sampleTime=10):
-    """
-    TO DO: create pdf and show pdf
-    """
+def create_IQ_downsampled_plots(files, base_dir , avgTime=2, sampleTime=10):
+    pdfName = '{}/IQ_downsampled_plots_{}_{}.pdf'.format(base_dir, avgTime, sampleTime))
+
+    pp = PdfPages(pdfName)
     for i,file in enumerate(files):
         data = qp.loadAlazarData(file)
         data = qp.BoxcarDownsample(data,avgTime,sampleTime)
@@ -63,7 +95,16 @@ def create_IQ_downsampled_plots(files, avgTime=2, sampleTime=10):
 
         qp.plotComplexHist(data[0],data[1])
         plt.title(f'Atten = {attens[i]} dB')
-        plt.show()
+        # plt.show()
+        pp.savefig(plt.gcf())            #Save each figure in pdf
+        plt.close()
+
+    pp.close()                           #close the pdf
+
+    # os.startfile(pdfName)
+
+    subprocess.Popen([pdfName],shell=True)
+    print("\nPlease review the downsampled IQ plots - {}".format(pdfName))
 
 
 def create_IQ_plot(data):
