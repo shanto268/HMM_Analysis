@@ -40,6 +40,7 @@ class AlazarPowerSweepData:
         self.metainfo = None
         self.HMM = None
         self.hdf5_file = None
+        self.sampleRateFromData = None
 
     def set_attenuation_configuration(self):
         atten_config = json.load(open("attenuation.json"))
@@ -48,7 +49,7 @@ class AlazarPowerSweepData:
         print("Please Ensure the Following Attenuation Configuration is Correct:\n\n")
         for key,value in atten_config.items():
             print(key + " = " + str(value))
-            atten_config += value
+            atten_config_value += value
 
         isCorrect = input("Press Y/y if Correct or N/n if not: ")
 
@@ -63,9 +64,9 @@ class AlazarPowerSweepData:
 
         return power_to_device
 
-    def get_initial_QP_means(self, sampleRateFromData, avgTime=3):
+    def get_initial_QP_means(self, avgTime=3):
         data = qp.loadAlazarData(self.files[self.index])
-        data, sr = qp.BoxcarDownsample(data, avgTime, sampleRate=sampleRateFromData, returnRate=True)
+        data, sr = qp.BoxcarDownsample(data, avgTime, sampleRate=self.sampleRateFromData, returnRate=True)
         data = qp.uint16_to_mV(data)
 
         create_IQ_plot(data)
@@ -102,14 +103,25 @@ class AlazarPowerSweepData:
 
         return metainfo
 
-    def start_HMM_fit(self,  avgTime=2, r_unit=[[5,1],[1,5]], intTime=1,SNRmin=3):
-
+    def process_Alazar_Data(self, avgTime=2, plots=True):
+        print("Creating figure paths.....")
         create_path(self.figure_path)
+        print("Reading and sorting data files.....")
+
         self.files, self.attens = sort_files_ascending_attenuation(self.files)
         set_plot_style()
-        sampleRateFromData = get_sample_rate_from_run(self.files[0])
+        self.sampleRateFromData = get_sample_rate_from_run(self.files[0])
+        
+        if plots:
+            print("Creating IQ downsampled plots.....")            
+            create_IQ_downsampled_plots(self.files, self.attens, self.project_path, avgTime)
+        else:
+            print("Data loaded without creating IQ downsampled plots....")            
 
-        create_IQ_downsampled_plots(self.files, self.project_path, avgTime, sampleRateFromData)
+    
+    
+    def start_HMM_fit(self,  r_unit=[[5,1],[1,5]], intTime=1,SNRmin=3):
+        print("\n\n"+"="*10+"\tHMM ANALYSIS STARTED\t"+"="*10)
 
         chosenAtten = int(input("\nAttenuation below which the system goes non-linear: "))
         self.power_to_device = self.set_attenuation_configuration()
@@ -121,12 +133,17 @@ class AlazarPowerSweepData:
 
         self.numModes = int(input("\nNumber of Modes you want to fit: "))
 
-        means = self.get_initial_QP_means(sampleRateFromData)
+        means = self.get_initial_QP_means()
         covars = self.get_initial_QP_covars(r_unit)
+        print(f"Extracted Means: {means}\nGussed Covariance:\n{covars}\n")
+        print("\nStarting HMM Analysis.....\n\n")
+        self.runHMM(means, covars,intTime, SNRmin)
 
-        self.runHMM(means, covars, sampleRateFromData,intTime,SNRmin)
+    def restart_HMM_fit(self, r_unit=[[5,1],[1,5]], intTime=1,SNRmin=3):
+        raise NotImplementedError()
+        
 
-    def runHMM(self, means, covars, sampleRateFromData,intTime=1,SNRmin=3):
+    def runHMM(self, means, covars,intTime=1,SNRmin=3):
         HMM = []
         skip = np.copy(self.index)
         n_comp = self.numModes
@@ -140,7 +157,6 @@ class AlazarPowerSweepData:
 
             metainfo = self.metainfo
 
-            print(f"attenuation: {atten}")
             savefile = os.path.join(self.project_path,'powerSweep','AnalyisResults',f'FullDataset.hdf5')
             self.hdf5_file = savefile
             if not os.path.exists(os.path.split(savefile)[0]):
@@ -162,8 +178,8 @@ class AlazarPowerSweepData:
             #############################################################
             # oops, accidentaly hit shift+enter. Hopefully stopped it before overwriting anything!
             data = qp.loadAlazarData(file)
-        #     data, sr = qp.BoxcarDownsample(data, avgTime=1,sampleRate=sampleRateFromData, returnRate=True)
-            data, sr = qp.BoxcarDownsample(data, avgTime=intTime,sampleRate=sampleRateFromData, returnRate=True) 
+        #     data, sr = qp.BoxcarDownsample(data, avgTime=1,sampleRate=self.sampleRateFromData, returnRate=True)
+            data, sr = qp.BoxcarDownsample(data, avgTime=intTime,sampleRate=self.sampleRateFromData, returnRate=True) 
             data = qp.uint16_to_mV(data)
             # fit the HMM
             M = hmm.GaussianHMM(n_components=n_comp,covariance_type='full',init_params='s',n_iter=500,tol=0.001)
@@ -315,15 +331,21 @@ class AlazarPowerSweepData:
             # save a copy of current means to use as estimate for next power
             means= np.copy(M.means_)
             covars= np.copy(M.covars_)
+            print(f"HMM fitting concluded on Alazar Data at attenuation: {atten} ...")
 
+        
+        print("All HMM fits created.....")
         hmm_fits_pdf.close()
         hmm_time_series_pdf.close()
         self.HMM = HMM
 
-        fdir = os.path.join(self.project_path,'powerSweep','AnalyisResults')
         try:
+            fdir = os.path.join(self.project_path,'powerSweep','AnalyisResults')
             pickle_HMM((HMM,fdir))
+            print("Pickled the HMM Object to disk.....")
         except:
             pass
-
+        
+        print("Starting post-HMM analysis plots.....")
         create_HMM_QP_statistics_plots(self.hdf5_file)
+        print("="*10+"\tHMM ANALYSIS CONCLUDED\t"+"="*10)

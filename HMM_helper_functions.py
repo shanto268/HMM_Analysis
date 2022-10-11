@@ -84,8 +84,8 @@ def sort_files_ascending_attenuation(files):
 
 
 
-def create_IQ_downsampled_plots(files, base_dir , avgTime=2, sampleTime=10):
-    pdfName = '{}/IQ_downsampled_plots_{}_{}.pdf'.format(base_dir, avgTime, sampleTime))
+def create_IQ_downsampled_plots(files, attens, base_dir, avgTime=2, sampleTime=10):
+    pdfName = '{}/IQ_downsampled_plots_{}_{}.pdf'.format(base_dir, avgTime, sampleTime)
 
     pp = PdfPages(pdfName)
     for i,file in enumerate(files):
