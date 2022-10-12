@@ -56,7 +56,7 @@ class AlazarPowerSweepData:
         if isCorrect in ["y","Y","y\n","Y\n","yes","Yes","YES"]:
             power_to_device = atten_config_value - self.attens
         elif isCorrect in ["n","N","no","NO"]:
-            print("Please update the `attenuation.json` file and re-run the code.")
+            print("Please update the `attenuation.json` file and re-run the function - <AlazarPowerSweepData Object>.start_HMM_fit(*args) .")
             quit()
         else:
             print("Incorrect Input. Try again. \n")
@@ -94,7 +94,7 @@ class AlazarPowerSweepData:
             pass
 
         elif isCorrect in ["n","N","no","NO"]:
-            print("Please update the `metainfo.json` file and re-run the code.")
+            print("Please update the `metainfo.json` file and re-run the function - <AlazarPowerSweepData Object>.start_HMM_fit(*args) .")
             quit()
 
         else:
@@ -157,7 +157,7 @@ class AlazarPowerSweepData:
 
             metainfo = self.metainfo
 
-            savefile = os.path.join(self.project_path,'powerSweep','AnalyisResults',f'FullDataset.hdf5')
+            savefile = os.path.join(self.project_path,'powerSweep','AnalyisResults','FullDataset.hdf5')
             self.hdf5_file = savefile
             if not os.path.exists(os.path.split(savefile)[0]):
                 os.makedirs(os.path.split(savefile)[0])
@@ -224,7 +224,7 @@ class AlazarPowerSweepData:
                     print(f'\n\n\nNew integration time = {intTime} because SNR was {np.min(SNRs):.6}\n\n\n')
                     data = qp.loadAlazarData(file)
                     srold = np.copy(sr)
-                    data, sr = qp.BoxcarDownsample(data,intTime,sampleRateMHz,returnRate = True)
+                    data, sr = qp.BoxcarDownsample(data,intTime,self.sampleRateFromData,returnRate = True)
                     data = qp.uint16_to_mV(data)
                     M = hmm.GaussianHMM(n_components=n_comp,covariance_type='full',init_params='s',n_iter=500,tol=0.001)
                     ###################################################
