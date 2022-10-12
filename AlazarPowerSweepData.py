@@ -385,5 +385,5 @@ class AlazarPowerSweepData:
             pass
         
         print("Starting post-HMM analysis plots.....")
-        create_HMM_QP_statistics_plots(self.hdf5_file)
+        #create_HMM_QP_statistics_plots(self.hdf5_file)
         print("="*10+"\tHMM ANALYSIS CONCLUDED\t"+"="*10)

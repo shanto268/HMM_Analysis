@@ -82,7 +82,7 @@ def update_metainfo(file):
     data["phi"] = phi
     
     with open("metainfo.json", "w") as jsonFile:
-        json.dump(data, jsonFile)
+        json.dump(data, jsonFile,  indent = 4, sort_keys = False)
 
 def get_phi_from_run(file):
     file = file.split(".")[0] + ".json"
