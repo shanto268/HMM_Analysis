@@ -1,0 +1,10 @@
+{
+    "Channels": "AB",
+    "Acquisition_duration": "5",
+    "Sample_Rate_MHz": "10.0",
+    "LO_frequency": "4.27238",
+    "flux_bias": "0.002665",
+    "DA_setting": "0",
+    "Temperature": "30.0",
+    "PHI": "0.47"
+}

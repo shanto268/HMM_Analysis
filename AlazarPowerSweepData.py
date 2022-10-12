@@ -24,6 +24,7 @@ import h5py
 import glob
 import json
 import os
+import matplotlib
 from HMM_helper_functions import *
 
 
@@ -71,6 +72,7 @@ class AlazarPowerSweepData:
 
         create_IQ_plot(data)
         means = plt.ginput(n = self.numModes)
+        plt.close()
         return means
 
 
@@ -109,7 +111,9 @@ class AlazarPowerSweepData:
         print("Reading and sorting data files.....")
 
         self.files, self.attens = sort_files_ascending_attenuation(self.files)
+        convert_to_json(self.files)
         set_plot_style()
+        
         self.sampleRateFromData = get_sample_rate_from_run(self.files[0])
         
         if plots:
@@ -132,10 +136,11 @@ class AlazarPowerSweepData:
         print("\nThe power to the device is {} dBM at the chosen attenuation {}".format(self.power_to_device[self.index], self.attens[self.index]))
 
         self.numModes = int(input("\nNumber of Modes you want to fit: "))
+        set_qt_backend()
 
         means = self.get_initial_QP_means()
         covars = self.get_initial_QP_covars(r_unit)
-        print(f"Extracted Means: {means}\nGussed Covariance:\n{covars}\n")
+        print(f"Extracted Means:\n{means}\n\nGussed Covariance:\n{covars}\n")
         print("\nStarting HMM Analysis.....\n\n")
         self.runHMM(means, covars,intTime, SNRmin)
 
@@ -144,6 +149,8 @@ class AlazarPowerSweepData:
         
 
     def runHMM(self, means, covars,intTime=1,SNRmin=3):
+        matplotlib.use('Agg')
+
         HMM = []
         skip = np.copy(self.index)
         n_comp = self.numModes

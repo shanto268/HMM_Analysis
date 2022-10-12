@@ -10,7 +10,48 @@ import glob
 import os
 import pickle
 import json
+import matplotlib
 
+
+def set_qt_backend():
+    try:
+        matplotlib.use('Qt5Agg')
+    except:
+        try:
+            matplotlib.use('Qt4Agg')
+        except:
+            matplotlib.use('QtAgg')
+
+def convert_to_json(files):
+    
+    for file in files:
+        try:
+            
+            file = file.replace(".bin",".txt") 
+            dict1 = {}
+    
+            with open(file) as fh:
+                for line in fh:
+                    try:
+                        command, description = line.strip().split(":")
+                        command = command.replace(" ","_")
+                        value = description.strip().split(" ")[0]
+                        dict1[command] = value
+                    except:
+                        pass
+    
+            file_name = file.replace(".txt",".json") 
+            out_file = open(file_name, "w")
+            json.dump(dict1, out_file, indent = 4, sort_keys = False)
+            out_file.close()
+       
+        except:
+            pass
+
+
+def get_all_project_folders(project_path):
+    folders = glob.glob(project_path+"\*flux")
+    return folders
 
 def pickle_HMM(HMM, fdir):
     for i,M in enumerate(HMM):
@@ -24,7 +65,7 @@ def pickle_HMM(HMM, fdir):
 
 def get_sample_rate_from_run(file):
     file = file.split(".")[0] + ".json"
-    return int(json.load(open(file))["sample_rate_MHz"])
+    return int(float(json.load(open(file))["Sample_Rate_MHz"]))
 
 def create_HMM_QP_statistics_plots(hdf5_file):
     create_mean_occupation_plot(hdf5_file)
@@ -45,6 +86,7 @@ def create_path(target_path):
         os.makedirs(target_path)
 
 def set_plot_style():
+    matplotlib.use('Agg')
     plt.rcParams['pdf.fonttype'] = 42
     plt.rcParams['font.size'] = 10
     plt.rcParams['figure.facecolor'] = 'white'
@@ -66,13 +108,22 @@ def set_plot_style():
 
 def sort_files_descending_attenuation(files):
     attens = []
-    for file in files:
-        _,s = file.split('_DA')
-        atten = s[:2]
-        attens.append(int(atten))
-    sortind = np.argsort(attens)
-    files = np.asarray(files)[sortind[::-1]]
-    attens = np.asarray(attens)[sortind[::-1]]
+    try:
+        for file in files:
+            _,s = file.split('_DA')
+            atten = s[:2]
+            attens.append(int(atten))
+        sortind = np.argsort(attens)
+        files = np.asarray(files)[sortind[::-1]]
+        attens = np.asarray(attens)[sortind[::-1]]
+    except:
+        for file in files:
+            atten = file.split('DA')[-1].split("_")[0]
+            attens.append(int(atten))
+        sortind = np.argsort(attens)
+        files = np.asarray(files)[sortind[::-1]]
+        attens = np.asarray(attens)[sortind[::-1]]
+                
     return files, attens
 
 
