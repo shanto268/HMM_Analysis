@@ -30,10 +30,11 @@ from HMM_helper_functions import *
 
 class AlazarPowerSweepData:
 
-    def __init__(self, project_path):
+    def __init__(self, project_path, interactive=True):
         self.project_path = project_path
         self.figure_path = r"{}\PowerSweepfigures\\".format(self.project_path)
         self.files = glob.glob(r"{}\**\*.bin".format(self.project_path),recursive=True)
+        self.interactive = interactive
         self.power_to_device = None
         self.attens = None
         self.index = None
@@ -42,27 +43,46 @@ class AlazarPowerSweepData:
         self.HMM = None
         self.hdf5_file = None
         self.sampleRateFromData = None
+        self.phi = None
+        self.temp = None
+        
+    def init_message(self):
+        if not self.interactive:
+            print("Please ensure the attenuation.json file is accurate.")
+            print("Please ensure the static experimental parameters of the metadata.json file is accurate.\n\n")
+        else:
+            pass
 
+            
     def set_attenuation_configuration(self):
         atten_config = json.load(open("attenuation.json"))
         atten_config_value = 0
-
-        print("Please Ensure the Following Attenuation Configuration is Correct:\n\n")
-        for key,value in atten_config.items():
-            print(key + " = " + str(value))
-            atten_config_value += value
-
-        isCorrect = input("Press Y/y if Correct or N/n if not: ")
-
-        if isCorrect in ["y","Y","y\n","Y\n","yes","Yes","YES"]:
-            power_to_device = atten_config_value - self.attens
-        elif isCorrect in ["n","N","no","NO"]:
-            print("Please update the `attenuation.json` file and re-run the function - <AlazarPowerSweepData Object>.start_HMM_fit(*args) .")
-            quit()
+        
+        if self.interactive:
+            
+            print("Please Ensure the Following Attenuation Configuration is Correct:\n\n")
+            for key,value in atten_config.items():
+                print(key + " = " + str(value))
+                atten_config_value += value
+    
+            isCorrect = input("Press Y/y if Correct or N/n if not: ")
+    
+            if isCorrect in ["y","Y","y\n","Y\n","yes","Yes","YES"]:
+                power_to_device = atten_config_value - self.attens
+            elif isCorrect in ["n","N","no","NO"]:
+                print("Please update the `attenuation.json` file and re-run the function - <AlazarPowerSweepData Object>.start_HMM_fit(*args) .")
+                quit()
+            else:
+                print("Incorrect Input. Try again. \n")
+                self.set_attenuation_configuration()
         else:
-            print("Incorrect Input. Try again. \n")
-            self.set_attenuation_configuration()
-
+                        
+            print("Attenuation Configuration:\n\n")
+            for key,value in atten_config.items():
+                print(key + " = " + str(value))
+                atten_config_value += value
+            power_to_device = atten_config_value - self.attens
+            
         return power_to_device
 
     def get_initial_QP_means(self, avgTime=3):
@@ -85,24 +105,29 @@ class AlazarPowerSweepData:
 
     def set_metadata(self):
         metainfo = json.load(open("metainfo.json"))
+        if self.interactive:
 
-        print("Please Ensure the Following MetaData is Correct:\n\n")
-        for key,value in metainfo.items():
-            print(key + " = " + str(value))
-
-        isCorrect = input("Press Y/y if Correct or N/n if not: ")
-
-        if isCorrect in ["y","Y","y\n","Y\n","yes","Yes","YES"]:
-            pass
-
-        elif isCorrect in ["n","N","no","NO"]:
-            print("Please update the `metainfo.json` file and re-run the function - <AlazarPowerSweepData Object>.start_HMM_fit(*args) .")
-            quit()
-
+            print("Please Ensure the Following MetaData is Correct:\n\n")
+            for key,value in metainfo.items():
+                print(key + " = " + str(value))
+    
+            isCorrect = input("Press Y/y if Correct or N/n if not: ")
+    
+            if isCorrect in ["y","Y","y\n","Y\n","yes","Yes","YES"]:
+                pass
+    
+            elif isCorrect in ["n","N","no","NO"]:
+                print("Please update the `metainfo.json` file and re-run the function - <AlazarPowerSweepData Object>.start_HMM_fit(*args) .")
+                quit()
+    
+            else:
+                print("Incorrect Input. Try again. \n")
+                self.set_metadata()
         else:
-            print("Incorrect Input. Try again. \n")
-            self.set_metadata()
-
+            print("MetaData: \n\n")
+            for key,value in metainfo.items():
+                print(key + " = " + str(value))
+            
         return metainfo
 
     def process_Alazar_Data(self, avgTime=2, plots=True):
@@ -112,10 +137,16 @@ class AlazarPowerSweepData:
 
         self.files, self.attens = sort_files_ascending_attenuation(self.files)
         convert_to_json(self.files)
+        
         set_plot_style()
-        
+        print("Reading and updating the metadata.....")
+
+        update_metainfo(self.files[0])
+
         self.sampleRateFromData = get_sample_rate_from_run(self.files[0])
-        
+        self.phi = get_phi_from_run(self.files[0])
+        self.temp = get_temp_from_run(self.files[0])
+
         if plots:
             print("Creating IQ downsampled plots.....")            
             create_IQ_downsampled_plots(self.files, self.attens, self.project_path, avgTime)
@@ -164,7 +195,7 @@ class AlazarPowerSweepData:
 
             metainfo = self.metainfo
 
-            savefile = os.path.join(self.project_path,'powerSweep','AnalyisResults','FullDataset.hdf5')
+            savefile = os.path.join(self.project_path,'powerSweep','AnalyisResults','FullDataset_T{}_PHI{}_.hdf5'.format(self.temp,str(self.phi).replace(".","p")[:5]))
             self.hdf5_file = savefile
             if not os.path.exists(os.path.split(savefile)[0]):
                 os.makedirs(os.path.split(savefile)[0])

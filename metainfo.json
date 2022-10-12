@@ -1,15 +1,1 @@
-{
-    "dateOfMeasurement" : 20221005,
-    "Temp": 30,
-    "eccosorb": "True",
-    "KandL": "True",
-    "rigidCables": "True",
-    "JPA": "True",
-    "TWPA": "True",
-    "ClearingCoupler": "False",
-    "sampleRateMHz": 10,
-    "durationSeconds": 5,
-    "f0": 4.2727,
-    "LOf": 4.27238,
-    "phi": 0.47
-}
+{"dateOfMeasurement": 20221005, "eccosorb": "True", "KandL": "True", "rigidCables": "True", "JPA": "True", "TWPA": "False", "ClearingCoupler": "False", "Device_id": "NBR07", "f0": 4.2727, "Temp": 30.0, "sampleRateMHz": 10, "durationSeconds": 5, "LOf": 4.2825274509169455, "phi": 0.3999999999999999}

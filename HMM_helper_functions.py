@@ -63,6 +63,35 @@ def pickle_HMM(HMM, fdir):
             pickle.dump(M,f)
 
 
+def update_metainfo(file):
+    file = file.split(".")[0] + ".json"
+    data = json.load(open(file))
+    LOf = float(data["LO_frequency"])
+    temp = float(data["Temperature"])
+    sampleRate = int(float(data["Sample_Rate_MHz"]))
+    phi = float(data["PHI"])
+    durationSeconds = int(data["Acquisition_duration"])
+        
+    with open("metainfo.json", "r") as jsonFile:
+        data = json.load(jsonFile)
+    
+    data["Temp"] = temp
+    data["sampleRateMHz"] = sampleRate
+    data["durationSeconds"] = durationSeconds
+    data["LOf"] = LOf
+    data["phi"] = phi
+    
+    with open("metainfo.json", "w") as jsonFile:
+        json.dump(data, jsonFile)
+
+def get_phi_from_run(file):
+    file = file.split(".")[0] + ".json"
+    return float(json.load(open(file))["PHI"])
+
+def get_temp_from_run(file):
+    file = file.split(".")[0] + ".json"
+    return float(json.load(open(file))["Temperature"])
+
 def get_sample_rate_from_run(file):
     file = file.split(".")[0] + ".json"
     return int(float(json.load(open(file))["Sample_Rate_MHz"]))
