@@ -122,8 +122,7 @@ def get_QP_means(project_path, phi, numModes):
         if means_phi[i][0] == phi:
             print(f"At Phi = {phi}")
             return means_phi[i][1]
-        else:
-            raise ValueError()
+
 
 def set_qt_backend():
     try:
