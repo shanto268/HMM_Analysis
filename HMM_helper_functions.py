@@ -3,6 +3,7 @@ from hmmlearn import hmm
 import numpy as np
 import matplotlib.pyplot as plt
 import fitTools.quasiparticleFunctions as qp
+from means_getter import project_path
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from matplotlib.backends.backend_pdf import PdfPages
 import h5py
@@ -12,6 +13,107 @@ import pickle
 import json
 import matplotlib
 
+def set_all_initial_QP_means(project_path, target_device_power=-127, numModes=2, avgTime=2):
+    flux_sweeps = get_all_project_folders(project_path)
+
+    phi_sweep = []
+    for power_sweeps in flux_sweeps:
+        power_sweep_obj = AlazarPowerSweepData(power_sweeps,interactive=False)
+        phi = power_sweep_obj.get_phi_sweep()
+        sampleRateMHz = power_sweep_obj.sampleRateFromData
+        phi_sweep.append(phi)
+
+    create_QP_means(project_path, phi_sweep, target_device_power, numModes, sampleRateMHz, avgTime)
+    print("All initial means have been set!")
+
+
+
+def create_dir(path,new_folder):
+    figurepath = os.path.join(path,new_folder)
+    if not os.path.exists(figurepath):
+        os.makedirs(figurepath)
+
+
+def get_phi_sweep_array():
+    raise NotImplementedError()
+
+
+
+def get_power_to_device(attens):
+    atten_config = json.load(open("attenuation.json"))
+    atten_config_value = 0
+
+    print("Attenuation Configuration:\n\n")
+    for key,value in atten_config.items():
+        print(key + " = " + str(value))
+        atten_config_value += value
+    power_to_device = atten_config_value - attens
+
+    return power_to_device
+
+def get_freqs_from_VNA():
+    # grab information about the 0 peak freq and drive frequency from the VNA fits
+    with open(os.path.join(project_path,f'Figures/PHI_{phi*1000:3.0f}_fit.pkl'),'rb') as f:
+        fitResults = pickle.load(f)
+    pars = fitResults[0]
+    if len(pars) == 6:
+        f0 = pars[3]
+        LOf = pars[3] - pars[4]
+        Delta = pars[4]
+    else:
+        f0 = pars[1]
+        Delta = 1.5*(qp.f_n_phi(phi, 0) - qp.f_n_phi(phi, 1))
+        LOf = f0 - Delta
+    print('PHI = {:.3f} -- LO is {:.6} Hz from f0'.format(phi,Delta*1e9))
+    raise DeprecationWarning()
+
+
+def create_QP_means(project_path, phi_sweep, targetDevPower, numModes=2, sampleRateMHz=10, avgTime=2):
+    create_dir(project_path, 'AnalysisResults\guessedMeans\Figures')
+    means_phi = []
+
+    for phi in phi_sweep:
+
+        # grab files
+        # grab the digital attenuator settings and then make sorted arrays of files/powers
+
+        files = glob.glob(r"{}\*\*\*.bin".format(project_path),recursive=True)
+        # files = glob.glob(os.path.join(project_path,f'{phi*1000:3.0f}flux*\*\*.bin'),recursive=True)
+        files, attens = sort_files_ascending_attenuation(files)
+        print("attens : {}".format(attens))
+
+        power_to_device = get_power_to_device(attens)
+
+        print("power_to_device : {}".format(power_to_device))
+        index = int(np.where(power_to_device == targetDevPower)[0])
+
+        # import data and try fitting
+        data = qp.loadAlazarData(files[index])
+        data, sr = qp.BoxcarDownsample(data,avgTime,sampleRateMHz,returnRate=True)
+        data = qp.uint16_to_mV(data)
+
+        h = qp.plotComplexHist(data[0],data[1],figsize=[4,4])
+        plt.title(f'PHI = {phi:.3f}')
+        means_guess = plt.ginput(numModes)
+        plt.close()
+        print(means_guess)
+        means_phi.append((phi,means_guess))
+
+    if not os.path.exists(os.path.join(project_path, 'AnalysisResults', 'guessedMeans')):
+        os.makedirs(os.path.join(project_path, 'AnalysisResults', 'guessedMeans'))
+    with open(os.path.join(project_path, 'AnalysisResults', 'guessedMeans','QP_init_means.pkl'),'wb') as f:
+        pickle.dump(means_phi,f)
+
+
+def get_QP_means(project_path, phi):
+    with open(os.path.join(project_path, 'AnalysisResults', 'guessedMeans','QP_init_means.pkl', 'rb')) as f:
+        means_phi = pickle.load(f)
+    for i in range(len(means_phi)):
+        if means_phi[i][0] == phi:
+            print(f"At Phi = {phi}")
+            return means_phi[i][1]
+        else:
+            raise ValueError()
 
 def set_qt_backend():
     try:
@@ -23,28 +125,26 @@ def set_qt_backend():
             matplotlib.use('QtAgg')
 
 def convert_to_json(files):
-    
     for file in files:
         try:
-            
-            file = file.replace(".bin",".txt") 
-            dict1 = {}
-    
-            with open(file) as fh:
-                for line in fh:
-                    try:
-                        command, description = line.strip().split(":")
-                        command = command.replace(" ","_")
-                        value = description.strip().split(" ")[0]
-                        dict1[command] = value
-                    except:
-                        pass
-    
-            file_name = file.replace(".txt",".json") 
-            out_file = open(file_name, "w")
-            json.dump(dict1, out_file, indent = 4, sort_keys = False)
-            out_file.close()
-       
+            file = file.replace(".bin",".txt")
+            if os.path.isfile(file.replace(".txt",".json")):
+                return
+            else:
+                dict1 = {}
+                with open(file) as fh:
+                    for line in fh:
+                        try:
+                            command, description = line.strip().split(":")
+                            command = command.replace(" ","_")
+                            value = description.strip().split(" ")[0]
+                            dict1[command] = value
+                        except:
+                            pass
+                file_name = file.replace(".txt",".json") 
+                out_file = open(file_name, "w")
+                json.dump(dict1, out_file, indent = 4, sort_keys = False)
+                out_file.close()
         except:
             pass
 
