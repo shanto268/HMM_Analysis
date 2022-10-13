@@ -142,13 +142,14 @@ class AlazarPowerSweepData:
         return metainfo
 
 
-    def get_phi_sweep(self):
+    def get_phi_sweep_and_sampleRate(self):
         self.files, self.attens = sort_files_ascending_attenuation(self.files)
         convert_to_json(self.files)
         self.phi = get_phi_from_run(self.files[0])
-        return self.phi
+        self.sampleRateFromData = get_sample_rate_from_run(self.files[0])
+        return self.phi, self.sampleRateFromData
 
-
+        
 
     def process_Alazar_Data(self, avgTime=2, plots=True):
         print("Creating figure paths.....")

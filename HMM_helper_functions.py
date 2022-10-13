@@ -3,7 +3,6 @@ from hmmlearn import hmm
 import numpy as np
 import matplotlib.pyplot as plt
 import fitTools.quasiparticleFunctions as qp
-from means_getter import project_path
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from matplotlib.backends.backend_pdf import PdfPages
 import h5py
@@ -12,17 +11,23 @@ import os
 import pickle
 import json
 import matplotlib
+import AlazarPowerSweepData as alazar
 
-def set_all_initial_QP_means(project_path, target_device_power=-127, numModes=2, avgTime=2):
+def get_all_phis_and_sampleRate(project_path):
     flux_sweeps = get_all_project_folders(project_path)
 
     phi_sweep = []
     for power_sweeps in flux_sweeps:
-        power_sweep_obj = AlazarPowerSweepData(power_sweeps,interactive=False)
-        phi = power_sweep_obj.get_phi_sweep()
-        sampleRateMHz = power_sweep_obj.sampleRateFromData
+        power_sweep_obj = alazar.AlazarPowerSweepData(power_sweeps,interactive=False)
+        phi, sampleRateMHz = power_sweep_obj.get_phi_sweep_and_sampleRate()
         phi_sweep.append(phi)
+    
+    return phi_sweep, sampleRateMHz
 
+def set_all_initial_QP_means(project_path, target_device_power=-127, numModes=2, avgTime=2):
+    
+    phi_sweep, sampleRateMHz = get_all_phis_and_sampleRate(project_path)
+    print(phi_sweep)    
     create_QP_means(project_path, phi_sweep, target_device_power, numModes, sampleRateMHz, avgTime)
     print("All initial means have been set!")
 
@@ -43,9 +48,8 @@ def get_power_to_device(attens):
     atten_config = json.load(open("attenuation.json"))
     atten_config_value = 0
 
-    print("Attenuation Configuration:\n\n")
+    #print("Attenuation Configuration:\n\n")
     for key,value in atten_config.items():
-        print(key + " = " + str(value))
         atten_config_value += value
     power_to_device = atten_config_value - attens
 
@@ -70,33 +74,37 @@ def get_freqs_from_VNA():
 
 def create_QP_means(project_path, phi_sweep, targetDevPower, numModes=2, sampleRateMHz=10, avgTime=2):
     create_dir(project_path, 'AnalysisResults\guessedMeans\Figures')
+    flux_sweeps = get_all_project_folders(project_path)
+
     means_phi = []
 
-    for phi in phi_sweep:
+    for i, phi in enumerate(phi_sweep):
 
         # grab files
         # grab the digital attenuator settings and then make sorted arrays of files/powers
 
-        files = glob.glob(r"{}\*\*\*.bin".format(project_path),recursive=True)
+        files = glob.glob(r"{}\**\*.bin".format(flux_sweeps[i]),recursive=True)
         # files = glob.glob(os.path.join(project_path,f'{phi*1000:3.0f}flux*\*\*.bin'),recursive=True)
         files, attens = sort_files_ascending_attenuation(files)
-        print("attens : {}".format(attens))
+       # print("attens : {}\n".format(attens))
 
         power_to_device = get_power_to_device(attens)
 
-        print("power_to_device : {}".format(power_to_device))
+       # print("\npower_to_device : {}".format(power_to_device))
         index = int(np.where(power_to_device == targetDevPower)[0])
 
+        
         # import data and try fitting
         data = qp.loadAlazarData(files[index])
         data, sr = qp.BoxcarDownsample(data,avgTime,sampleRateMHz,returnRate=True)
         data = qp.uint16_to_mV(data)
-
+        
+        set_qt_backend()
         h = qp.plotComplexHist(data[0],data[1],figsize=[4,4])
         plt.title(f'PHI = {phi:.3f}')
         means_guess = plt.ginput(numModes)
         plt.close()
-        print(means_guess)
+        print(f"Chosen Means:\n{means_guess}")
         means_phi.append((phi,means_guess))
 
     if not os.path.exists(os.path.join(project_path, 'AnalysisResults', 'guessedMeans')):
@@ -106,7 +114,7 @@ def create_QP_means(project_path, phi_sweep, targetDevPower, numModes=2, sampleR
 
 
 def get_QP_means(project_path, phi):
-    with open(os.path.join(project_path, 'AnalysisResults', 'guessedMeans','QP_init_means.pkl', 'rb')) as f:
+    with open(os.path.join(project_path, 'AnalysisResults', 'guessedMeans','QP_init_means.pkl'), 'rb') as f:
         means_phi = pickle.load(f)
     for i in range(len(means_phi)):
         if means_phi[i][0] == phi:
