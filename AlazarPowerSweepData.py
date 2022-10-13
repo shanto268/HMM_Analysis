@@ -30,11 +30,12 @@ from HMM_helper_functions import *
 
 class AlazarPowerSweepData:
 
-    def __init__(self, project_path, interactive=True):
+    def __init__(self, project_path, interactive=True, project_root=None):
         self.project_path = project_path
         self.figure_path = r"{}\PowerSweepfigures\\".format(self.project_path)
         self.files = glob.glob(r"{}\**\*.bin".format(self.project_path),recursive=True)
         self.interactive = interactive
+        self.project_root = project_root
         self.power_to_device = None
         self.attens = None
         self.index = None
@@ -45,6 +46,7 @@ class AlazarPowerSweepData:
         self.sampleRateFromData = None
         self.phi = None
         self.temp = None
+        
         
     def init_message(self):
         if not self.interactive:
@@ -97,12 +99,12 @@ class AlazarPowerSweepData:
 
     def get_initial_QP_means(self, avgTime=3):
         if self.interactive:
-            return get_QP_means_from_IQ(avgTime)
+            return self.get_QP_means_from_IQ(avgTime)
         else:
             try:
-                return get_QP_means(self.project_path, self.phi)
+                return get_QP_means(self.project_root, self.phi, self.numModes)
             except:
-                return get_QP_means_from_IQ(avgTime)
+                return self.get_QP_means_from_IQ(avgTime)
 
 
 

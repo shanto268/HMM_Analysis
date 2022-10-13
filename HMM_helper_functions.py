@@ -102,19 +102,21 @@ def create_QP_means(project_path, phi_sweep, targetDevPower, numModes=2, sampleR
         set_qt_backend()
         h = qp.plotComplexHist(data[0],data[1],figsize=[4,4])
         plt.title(f'PHI = {phi:.3f}')
-        means_guess = plt.ginput(numModes)
+        means_guess = plt.ginput(numModes,timeout=120)
+        figname = f"IQ_plot_P{phi:.3f}_M{numModes}_SR{sampleRateMHz}_DP{targetDevPower}_DA{attens[index]}.png".replace(".","p")
+        plt.savefig(os.path.join(project_path, f'AnalysisResults\guessedMeans\Figures\{figname}'))
         plt.close()
         print(f"Chosen Means:\n{means_guess}")
         means_phi.append((phi,means_guess))
 
     if not os.path.exists(os.path.join(project_path, 'AnalysisResults', 'guessedMeans')):
         os.makedirs(os.path.join(project_path, 'AnalysisResults', 'guessedMeans'))
-    with open(os.path.join(project_path, 'AnalysisResults', 'guessedMeans','QP_init_means.pkl'),'wb') as f:
+    with open(os.path.join(project_path, 'AnalysisResults', 'guessedMeans','QP_init_means_M{numModes}.pkl'),'wb') as f:
         pickle.dump(means_phi,f)
 
 
-def get_QP_means(project_path, phi):
-    with open(os.path.join(project_path, 'AnalysisResults', 'guessedMeans','QP_init_means.pkl'), 'rb') as f:
+def get_QP_means(project_path, phi, numModes):
+    with open(os.path.join(project_path, 'AnalysisResults', 'guessedMeans',f'QP_init_means_M{numModes}.pkl'), 'rb') as f:
         means_phi = pickle.load(f)
     for i in range(len(means_phi)):
         if means_phi[i][0] == phi:
