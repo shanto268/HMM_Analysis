@@ -24,15 +24,18 @@ import h5py
 import glob
 import json
 import os
+import matplotlib
 from HMM_helper_functions import *
 
 
 class AlazarPowerSweepData:
 
-    def __init__(self, project_path):
+    def __init__(self, project_path, interactive=True, project_root=None):
         self.project_path = project_path
         self.figure_path = r"{}\PowerSweepfigures\\".format(self.project_path)
         self.files = glob.glob(r"{}\**\*.bin".format(self.project_path),recursive=True)
+        self.interactive = interactive
+        self.project_root = project_root
         self.power_to_device = None
         self.attens = None
         self.index = None
@@ -40,37 +43,70 @@ class AlazarPowerSweepData:
         self.metainfo = None
         self.HMM = None
         self.hdf5_file = None
+        self.sampleRateFromData = None
+        self.phi = None
+        self.temp = None
+        
+        
+    def init_message(self):
+        if not self.interactive:
+            print("Please ensure the attenuation.json file is accurate.")
+            print("Please ensure the static experimental parameters of the metadata.json file is accurate.\n\n")
+        else:
+            pass
 
     def set_attenuation_configuration(self):
         atten_config = json.load(open("attenuation.json"))
         atten_config_value = 0
-
-        print("Please Ensure the Following Attenuation Configuration is Correct:\n\n")
-        for key,value in atten_config.items():
-            print(key + " = " + str(value))
-            atten_config += value
-
-        isCorrect = input("Press Y/y if Correct or N/n if not: ")
-
-        if isCorrect in ["y","Y","y\n","Y\n","yes","Yes","YES"]:
-            power_to_device = atten_config_value - self.attens
-        elif isCorrect in ["n","N","no","NO"]:
-            print("Please update the `attenuation.json` file and re-run the code.")
-            quit()
+        
+        if self.interactive:
+            
+            print("Please Ensure the Following Attenuation Configuration is Correct:\n\n")
+            for key,value in atten_config.items():
+                print(key + " = " + str(value))
+                atten_config_value += value
+    
+            isCorrect = input("Press Y/y if Correct or N/n if not: ")
+    
+            if isCorrect in ["y","Y","y\n","Y\n","yes","Yes","YES"]:
+                power_to_device = atten_config_value - self.attens
+            elif isCorrect in ["n","N","no","NO"]:
+                print("Please update the `attenuation.json` file and re-run the function - <AlazarPowerSweepData Object>.start_HMM_fit(*args) .")
+                quit()
+            else:
+                print("Incorrect Input. Try again. \n")
+                self.set_attenuation_configuration()
         else:
-            print("Incorrect Input. Try again. \n")
-            self.set_attenuation_configuration()
-
+                        
+            print("Attenuation Configuration:\n\n")
+            for key,value in atten_config.items():
+                print(key + " = " + str(value))
+                atten_config_value += value
+            power_to_device = atten_config_value - self.attens
+            
         return power_to_device
 
-    def get_initial_QP_means(self, sampleRateFromData, avgTime=3):
+    def get_QP_means_from_IQ(self, avgTime):
         data = qp.loadAlazarData(self.files[self.index])
-        data, sr = qp.BoxcarDownsample(data, avgTime, sampleRate=sampleRateFromData, returnRate=True)
+        data, sr = qp.BoxcarDownsample(data, avgTime, sampleRate=self.sampleRateFromData, returnRate=True)
         data = qp.uint16_to_mV(data)
 
         create_IQ_plot(data)
         means = plt.ginput(n = self.numModes)
+        plt.close()
         return means
+
+
+    def get_initial_QP_means(self, avgTime=3):
+        if self.interactive:
+            return self.get_QP_means_from_IQ(avgTime)
+        else:
+            try:
+                return get_QP_means(self.project_root, self.phi, self.numModes)
+            except:
+                return self.get_QP_means_from_IQ(avgTime)
+
+
 
 
     def get_initial_QP_covars(self, r_unit=[[5,1],[1,5]]):
@@ -82,51 +118,109 @@ class AlazarPowerSweepData:
 
     def set_metadata(self):
         metainfo = json.load(open("metainfo.json"))
+        if self.interactive:
 
-        print("Please Ensure the Following MetaData is Correct:\n\n")
-        for key,value in metainfo.items():
-            print(key + " = " + str(value))
-
-        isCorrect = input("Press Y/y if Correct or N/n if not: ")
-
-        if isCorrect in ["y","Y","y\n","Y\n","yes","Yes","YES"]:
-            pass
-
-        elif isCorrect in ["n","N","no","NO"]:
-            print("Please update the `metainfo.json` file and re-run the code.")
-            quit()
-
+            print("Please Ensure the Following MetaData is Correct:\n\n")
+            for key,value in metainfo.items():
+                print(key + " = " + str(value))
+    
+            isCorrect = input("Press Y/y if Correct or N/n if not: ")
+    
+            if isCorrect in ["y","Y","y\n","Y\n","yes","Yes","YES"]:
+                pass
+    
+            elif isCorrect in ["n","N","no","NO"]:
+                print("Please update the `metainfo.json` file and re-run the function - <AlazarPowerSweepData Object>.start_HMM_fit(*args) .")
+                quit()
+    
+            else:
+                print("Incorrect Input. Try again. \n")
+                self.set_metadata()
         else:
-            print("Incorrect Input. Try again. \n")
-            self.set_metadata()
-
+            print("MetaData: \n\n")
+            for key,value in metainfo.items():
+                print(key + " = " + str(value))
+            
         return metainfo
 
-    def start_HMM_fit(self,  avgTime=2, r_unit=[[5,1],[1,5]], intTime=1,SNRmin=3):
 
-        create_path(self.figure_path)
+    def get_phi_sweep_and_sampleRate(self):
         self.files, self.attens = sort_files_ascending_attenuation(self.files)
+        convert_to_json(self.files)
+        self.phi = get_phi_from_run(self.files[0])
+        self.sampleRateFromData = get_sample_rate_from_run(self.files[0])
+        return self.phi, self.sampleRateFromData
+
+        
+
+    def process_Alazar_Data(self, avgTime=2, plots=True):
+        print("Creating figure paths.....")
+        create_path(self.figure_path)
+        print("Reading and sorting data files.....")
+
+        self.files, self.attens = sort_files_ascending_attenuation(self.files)
+        convert_to_json(self.files)
+
         set_plot_style()
-        sampleRateFromData = get_sample_rate_from_run(self.files[0])
+        print("Reading and updating the metadata.....")
 
-        create_IQ_downsampled_plots(self.files, self.project_path, avgTime, sampleRateFromData)
+        update_metainfo(self.files[0])
 
-        chosenAtten = int(input("\nAttenuation below which the system goes non-linear: "))
-        self.power_to_device = self.set_attenuation_configuration()
+        self.sampleRateFromData = get_sample_rate_from_run(self.files[0])
+        self.phi = get_phi_from_run(self.files[0])
+        self.temp = get_temp_from_run(self.files[0])
 
-        self.metainfo = self.set_metadata()
+        if plots:
+            print("Creating IQ downsampled plots.....")            
+            create_IQ_downsampled_plots(self.files, self.attens, self.project_path, avgTime)
+        else:
+            print("Data loaded without creating IQ downsampled plots....")            
 
-        self.index = int(np.where(self.attens == chosenAtten)[0])
-        print("\nThe power to the device is {} dBM at the chosen attenuation {}".format(self.power_to_device[self.index], self.attens[self.index]))
+    def start_HMM_fit(self,  r_unit=[[5,1],[1,5]], intTime=1,SNRmin=3, targetPower=None, numModes=2):
+        print("\n\n"+"="*10+"\tHMM ANALYSIS STARTED\t"+"="*10)
 
-        self.numModes = int(input("\nNumber of Modes you want to fit: "))
+        if self.interactive:
+            chosenAtten = int(input("\nAttenuation below which the system goes non-linear: "))
+            self.power_to_device = self.set_attenuation_configuration()
 
-        means = self.get_initial_QP_means(sampleRateFromData)
-        covars = self.get_initial_QP_covars(r_unit)
+            self.metainfo = self.set_metadata()
 
-        self.runHMM(means, covars, sampleRateFromData,intTime,SNRmin)
+            self.index = int(np.where(self.attens == chosenAtten)[0])
+            print("\nThe power to the device is {} dBM at the chosen attenuation {}".format(self.power_to_device[self.index], self.attens[self.index]))
 
-    def runHMM(self, means, covars, sampleRateFromData,intTime=1,SNRmin=3):
+            self.numModes = int(input("\nNumber of Modes you want to fit: "))
+            set_qt_backend()
+
+            means = self.get_initial_QP_means()
+            covars = self.get_initial_QP_covars(r_unit)
+            print(f"Extracted Means:\n{means}\n\nGussed Covariance:\n{covars}\n")
+            print("\nStarting HMM Analysis.....\n\n")
+            self.runHMM(means, covars,intTime, SNRmin)
+        else:
+            self.power_to_device = self.set_attenuation_configuration()
+            self.metainfo = self.set_metadata()
+            self.index = int(np.where(self.power_to_device == targetPower)[0])
+
+            chosenAtten = self.attens[self.index]
+            print("\nThe chosen power to the device is {} dBM at the attenuation {}".format(self.power_to_device[self.index], chosenAtten))
+
+            self.numModes = numModes
+            print(f"\nNumber of Modes to be fit: {self.numModes}")
+            set_qt_backend()
+
+            means = self.get_initial_QP_means()
+            covars = self.get_initial_QP_covars(r_unit)
+            print(f"Extracted Means:\n{means}\n\nGussed Covariance:\n{covars}\n")
+            print("\nStarting HMM Analysis.....\n\n")
+            self.runHMM(means, covars,intTime, SNRmin)
+
+
+    def restart_HMM_fit(self, r_unit=[[5,1],[1,5]], intTime=1,SNRmin=3):
+        raise NotImplementedError()
+
+    def runHMM(self, means, covars,intTime=1,SNRmin=3):
+        matplotlib.use('Agg')
+
         HMM = []
         skip = np.copy(self.index)
         n_comp = self.numModes
@@ -140,8 +234,7 @@ class AlazarPowerSweepData:
 
             metainfo = self.metainfo
 
-            print(f"attenuation: {atten}")
-            savefile = os.path.join(self.project_path,'powerSweep','AnalyisResults',f'FullDataset.hdf5')
+            savefile = os.path.join(self.project_path, 'AnalyisResults','FullDataset_M{}_T{}_PHI{}_.hdf5'.format(self.numModes, self.temp,str(self.phi).replace(".","p")[:5]))
             self.hdf5_file = savefile
             if not os.path.exists(os.path.split(savefile)[0]):
                 os.makedirs(os.path.split(savefile)[0])
@@ -162,8 +255,8 @@ class AlazarPowerSweepData:
             #############################################################
             # oops, accidentaly hit shift+enter. Hopefully stopped it before overwriting anything!
             data = qp.loadAlazarData(file)
-        #     data, sr = qp.BoxcarDownsample(data, avgTime=1,sampleRate=sampleRateFromData, returnRate=True)
-            data, sr = qp.BoxcarDownsample(data, avgTime=intTime,sampleRate=sampleRateFromData, returnRate=True) 
+        #     data, sr = qp.BoxcarDownsample(data, avgTime=1,sampleRate=self.sampleRateFromData, returnRate=True)
+            data, sr = qp.BoxcarDownsample(data, avgTime=intTime,sampleRate=self.sampleRateFromData, returnRate=True) 
             data = qp.uint16_to_mV(data)
             # fit the HMM
             M = hmm.GaussianHMM(n_components=n_comp,covariance_type='full',init_params='s',n_iter=500,tol=0.001)
@@ -208,7 +301,7 @@ class AlazarPowerSweepData:
                     print(f'\n\n\nNew integration time = {intTime} because SNR was {np.min(SNRs):.6}\n\n\n')
                     data = qp.loadAlazarData(file)
                     srold = np.copy(sr)
-                    data, sr = qp.BoxcarDownsample(data,intTime,sampleRateMHz,returnRate = True)
+                    data, sr = qp.BoxcarDownsample(data,intTime,self.sampleRateFromData,returnRate = True)
                     data = qp.uint16_to_mV(data)
                     M = hmm.GaussianHMM(n_components=n_comp,covariance_type='full',init_params='s',n_iter=500,tol=0.001)
                     ###################################################
@@ -315,15 +408,21 @@ class AlazarPowerSweepData:
             # save a copy of current means to use as estimate for next power
             means= np.copy(M.means_)
             covars= np.copy(M.covars_)
+            print(f"HMM fitting concluded on Alazar Data at attenuation: {atten} ...")
 
+        
+        print("All HMM fits created.....")
         hmm_fits_pdf.close()
         hmm_time_series_pdf.close()
         self.HMM = HMM
 
-        fdir = os.path.join(self.project_path,'powerSweep','AnalyisResults')
         try:
-            pickle_HMM((HMM,fdir))
+            fdir = os.path.join(self.project_path,'AnalyisResults')
+            pickle_HMM(HMM,fdir)
+            print("Pickled the HMM Object to disk.....")
         except:
             pass
-
-        create_HMM_QP_statistics_plots(self.hdf5_file)
+        
+        print("Starting post-HMM analysis plots.....")
+        #create_HMM_QP_statistics_plots(self.hdf5_file)
+        print("="*10+"\tHMM ANALYSIS CONCLUDED\t"+"="*10+"\n\n")
