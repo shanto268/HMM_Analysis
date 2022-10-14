@@ -227,8 +227,8 @@ class AlazarPowerSweepData:
         #######################################3
         # original code used i,file in enumerate(files). There are still some dependencies on i in the code below
         #########################################
-        hmm_fits_pdf = PdfPages('{}/HMM_IQ_fits.pdf'.format(self.project_path))
-        hmm_time_series_pdf = PdfPages('{}/HMM_time_series.pdf'.format(self.project_path))
+        hmm_fits_pdf = PdfPages('{}/HMM_IQ_fits_{}modes.pdf'.format(self.project_path, self.numModes))
+        hmm_time_series_pdf = PdfPages('{}/HMM_time_series_{}modes.pdf'.format(self.project_path, self.numModes))
 
         for i,atten,file in zip(np.arange(len(self.attens[self.index:])),self.attens[self.index:],self.files[self.index:]):
 
@@ -354,7 +354,7 @@ class AlazarPowerSweepData:
             plt.xlabel('I [mV]')
             plt.ylabel('Q [mV]')
             plt.title('HMM fit | {:.2} MHz | {} dBm'.format(sr,self.power_to_device[i+skip]))
-            plt.savefig(os.path.join(figpath,'HMMfits_{}_{}dBm.png'.format(i+skip,self.power_to_device[i+skip])))
+            plt.savefig(os.path.join(figpath,'HMMfits_{}_{}dBm_{}modes.png'.format(i+skip,self.power_to_device[i+skip],self.numModes)))
             hmm_fits_pdf.savefig(plt.gcf())
             plt.close()
 
@@ -368,7 +368,7 @@ class AlazarPowerSweepData:
             # plot a section of time series
             fig, ax = qp.plotTimeSeries(data,Q,np.arange(Q.size)/sr,1500,2000,zeroTime=True)
             plt.title('{:.2} MHz | {} dBm'.format(sr,self.power_to_device[i+skip]))
-            plt.savefig(os.path.join(figpath,'TimeSeries__{}_{}dBm.png'.format(i+skip,self.power_to_device[i+skip])))
+            plt.savefig(os.path.join(figpath,'TimeSeries__{}_{}dBm_{}modes.png'.format(i+skip,self.power_to_device[i+skip],self.numModes)))
             hmm_time_series_pdf.savefig(plt.gcf())
             plt.close()
 
@@ -415,13 +415,15 @@ class AlazarPowerSweepData:
         hmm_fits_pdf.close()
         hmm_time_series_pdf.close()
         self.HMM = HMM
-
+        
+        """
         try:
             fdir = os.path.join(self.project_path,'AnalyisResults')
             pickle_HMM(HMM,fdir)
             print("Pickled the HMM Object to disk.....")
         except:
             pass
+        """
         
         print("Starting post-HMM analysis plots.....")
         #create_HMM_QP_statistics_plots(self.hdf5_file)

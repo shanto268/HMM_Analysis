@@ -18,6 +18,7 @@
 ---
 
 # Usage for Flux-Power Swepp Data:
+0. Verify and update all the info in `attenuation.json`
 1. **ONLY** Update the following in `metainfo.json` 
 ```json
     "dateOfMeasurement" : 20221005,
@@ -30,6 +31,7 @@
     "Device_id": "NBR07",
     "f0": 4.2727,
 ```
+2. Run `jupyter-notebook HMM_flux_power_sweep.ipynb`
 
 ---
 
