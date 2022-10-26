@@ -6,11 +6,64 @@ import h5py
 import HMM_helper_functions as hmm_func
 import subprocess
 import glob
+from scipy.signal import windows, oaconvolve, savgol_filter
+from scipy.optimize import curve_fit,leastsq
 
-"""
-TO DO:
-- pdf making
-"""
+
+def weightedExp(t,a,tau):
+    return a*(t/tau)*np.exp(-t/tau)
+
+def fitWeightedExpDecay(dist,t,cut=0,returnTauDetector=True,returnSGDIST=False):
+    '''estimates the detection rate and fits the distribution to exponential.
+    
+    returns pars, cov from scipy.optimize.curve_fit and optionally the detector timescale.
+    --------------------------------------
+    dist:   data, presumably lifetimes between events
+    t:      times corresponding to dist, must have same size
+    returnTauDetector:  Boolean, if False, only returns pars, cov.
+    '''
+    cutmask = t >= cut
+    window = max(int(len(dist)*0.04),5)
+    window += 0 if window%2 else 1 # ensure window is odd
+    sgdist = savgol_filter(dist,window,3)
+    tdetInd = np.argmax(sgdist)
+    tauDetector = t[tdetInd]
+    ampGuess = 1.2*sgdist[tdetInd]
+    mask = sgdist[tdetInd:] < ampGuess/np.e
+    tauGuess = t[tdetInd:][mask][0]
+    # tauGuess = cut
+    pars, cov = curve_fit(weightedExp,t[cutmask],dist[cutmask],p0=[ampGuess,tauGuess])
+    
+    if returnSGDIST and returnTauDetector:
+        return pars, cov, tauDetector, sgdist
+    elif returnTauDetector:
+        return pars, cov, tauDetector
+    elif returnSGDIST:
+        return pars, cov, sgdist
+    else:
+        return pars, cov
+
+def getWeightedTauDist(dist,bins=80,color='grey',alpha=0.3,figsize=[9,6]):
+    '''Creates new figure with given distribution as a histogram and returns nonzero bins with centers.
+    
+    returns pyplot subplot, nonzero bin counts, nonzero bin centers
+    ---------------------------
+    dist:   data to histogram
+    bins:   passed to pyplot.hist
+    color:  passed to pyplot.hist
+    alpha:  passed to pyplot.hist
+    figsize:    passed to pyplot.figure
+    '''
+    fig = plt.figure(figsize=figsize,constrained_layout=True)
+    h = fig.add_subplot()
+    hi = h.hist(dist,weights=dist,bins=bins,color=color,alpha=alpha,density=True)
+    # h.set_xlim(hi[1][1],hi[1][-1])
+    # h.set_ylim(0,1.5*np.max(hi[0][3:]))
+    binmask = np.array(hi[0] > 0,dtype=bool)
+    BinCenters = (hi[1][1:] + hi[1][:-1])/2
+    plt.close()
+    return hi[0][binmask], BinCenters[binmask]
+
 
 def PlotWeightedExpDecay(dist,bins=100):
     plt.hist(dist,bins,density=True, weights=dist, color="grey", alpha=0.3)
@@ -34,6 +87,31 @@ def create_lifetime_distribution(hdf5_file, figpath):
         plt.savefig(figpath+"/"+f"lifetime_of_{key}_qp_distribution.png")
         plt.close()
 
+def fitAndPlotWeightedExpDecay(dist,key,cut=None,bins=100,figsize=[3.325,3.325]):
+    if cut is None:
+        cut = np.mean(dist)
+        
+    hi,bc = getWeightedTauDist(dist,bins=bins,figsize=figsize)
+    
+    pars,cov,taud,sgdist = fitWeightedExpDecay(hi,bc,cut=cut,returnSGDIST=True)
+    perr = np.sqrt(np.diag(cov)) # 1 sigma error on fit parameters
+    taus = [pars[0],perr[0],taud]
+    
+    fit = weightedExp(bc,*pars)
+
+    lowb = weightedExp(bc,pars[0]-perr[0],pars[1]-perr[1])
+    uppb = weightedExp(bc,pars[0]+perr[0],pars[1]+perr[1])
+    
+    plt.hist(dist,bins, weights=dist, color="grey", alpha=0.3,density=True)
+    labels = "fit: $ \\tau = {:6.1f} \pm{:6.1f} \\mu s $".format(pars[1],perr[1])
+    plt.plot(bc,fit,color='darkgreen',label=labels)
+    plt.fill_between(bc,uppb,lowb,color='lightgreen')
+    plt.ylabel("density * $\\overline{\\mu}$")
+    plt.legend()
+    plt.xlabel('Time [$\\mu$s]')    
+    fitstring = r"$\frac{AT}{\tau}e^{\frac{T}{\tau}}$"
+    plt.title("QP Mode: {} | {}".format(key, fitstring))
+
 def create_weighted_lifetime_distribution(hdf5_file, figpath, numModes):
     with h5py.File(hdf5_file,'r') as fb:
         for key in list(fb.keys()):
@@ -45,22 +123,37 @@ def create_weighted_lifetime_distribution(hdf5_file, figpath, numModes):
     time = np.arange(len(nEst)) / sampleRate
     lifetimes_dict = qp.extractLifetimes(nEst,time)
     for key,value in lifetimes_dict.items():
-        PlotWeightedExpDecay(value)
-        plt.title(f"QP Mode: {key}")
+        fitAndPlotWeightedExpDecay(value,key)
         plt.savefig(figpath+"/"+f"weighted_lifetime_of_{key}_qp_distribution.png")
         plt.close()
-
 def create_HMM_QP_statistics_plots(hdf5_file, figpath, numModes):
     hmm_func.set_plot_style()
     figpath = figpath + f"/post_HMM_fit_plots_M{numModes}"
     hmm_func.create_path(figpath)
-    create_mean_occupation_plot(hdf5_file, figpath)
-    create_transition_probability_plot(hdf5_file, figpath, numModes)
-    create_transition_rate_plot(hdf5_file, figpath, numModes)
-    create_transition_lifetimes_plot(hdf5_file, figpath, numModes)
-    create_lifetime_distribution(hdf5_file, figpath)
-    create_weighted_lifetime_distribution(hdf5_file, figpath, numModes)
-    # create_summary_plot_pdf(figpath)
+    try:
+        create_mean_occupation_plot(hdf5_file, figpath)
+    except Exception as err:
+        print("Issue with \"create_mean_occupation_plot\" \nError message {}".format(err))
+    try:
+        create_transition_probability_plot(hdf5_file, figpath, numModes)
+    except Exception as err:
+        print("Issue with \"create_transition_probability_plot\" \nError message {}".format(err))
+    try:
+        create_transition_rate_plot(hdf5_file, figpath, numModes)
+    except Exception as err:
+        print("Issue with \"create_transition_rate_plot\" \nError message {}".format(err))
+    try:
+        create_transition_lifetimes_plot(hdf5_file, figpath, numModes)
+    except Exception as err:
+        print("Issue with \"create_transition_lifetimes_plot\" \nError message {}".format(err))
+    try:
+        create_lifetime_distribution(hdf5_file, figpath)
+    except Exception as err:
+        print("Issue with \"create_lifetime_distribution\" \nError message {}".format(err))
+    try:
+        create_weighted_lifetime_distribution(hdf5_file, figpath, numModes)
+    except Exception as err:
+        print("Issue with \"create_weighted_lifetime_distribution\" \nError message {}".format(err))
 
 
 def create_summary_plot_pdf(figpath):
@@ -88,12 +181,15 @@ def create_2_scale_scatter_plots(x,y,xlabel,ylabel,title,figname):
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
 
-    plt.subplot(212)
-    plt.scatter(x, y, color="red")
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
-    plt.yscale('log')
-    plt.savefig(figname, bbox_inches='tight')
+    try:
+        plt.subplot(212)
+        plt.scatter(x, y, color="red")
+        plt.xlabel(xlabel)
+        plt.ylabel(ylabel)
+        plt.yscale('log')
+        plt.savefig(figname, bbox_inches='tight')
+    except:
+        pass
     plt.close()
 
 
@@ -106,12 +202,15 @@ def create_2_scale_plots(x,y,xlabel,ylabel,title,figname):
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
 
-    plt.subplot(212)
-    plt.plot(x, y)
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
-    plt.yscale('log')
-    plt.savefig(figname, bbox_inches='tight')
+    try:
+        plt.subplot(212)
+        plt.plot(x, y)
+        plt.xlabel(xlabel)
+        plt.ylabel(ylabel)
+        plt.yscale('log')
+        plt.savefig(figname, bbox_inches='tight')
+    except:
+        pass
     plt.close()
 
 
@@ -166,12 +265,15 @@ def create_2_scale_multiple_scatter_plots(x,ys,xlabel,ylabel,labels,title,fignam
     plt.ylabel(ylabel)
 
     plt.subplot(212)
-    for i,y in enumerate(ys):
-        plt.scatter(x, ys[i],label=labels[i])
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
-    plt.yscale('log')
-    plt.legend()
+    try:
+        for i,y in enumerate(ys):
+            plt.scatter(x, ys[i],label=labels[i])
+        plt.xlabel(xlabel)
+        plt.ylabel(ylabel)
+        plt.yscale('log')
+        plt.legend()
+    except:
+        pass
     plt.savefig(figname, bbox_inches='tight')
     plt.close()
 
