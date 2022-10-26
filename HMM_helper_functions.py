@@ -12,6 +12,7 @@ import pickle
 import json
 import matplotlib
 import AlazarPowerSweepData as alazar
+from HMM_plotter_functions import *
 
 def get_all_phis_and_sampleRate(project_path):
     flux_sweeps = get_all_project_folders(project_path)
@@ -205,19 +206,6 @@ def get_sample_rate_from_run(file):
     file = file.split(".")[0] + ".json"
     return int(float(json.load(open(file))["Sample_Rate_MHz"]))
 
-def create_HMM_QP_statistics_plots(hdf5_file):
-    create_mean_occupation_plot(hdf5_file)
-    create_transition_lifetimes_plot(hdf5_file)
-    create_transition_probability_plot(hdf5_file)
-
-def create_mean_occupation_plot(hdf5_file):
-    raise NotImplementedError()
-
-def create_transition_probability_plot(hdf5_file):
-    raise NotImplementedError()
-
-def create_transition_lifetimes_plot(hdf5_file):
-    raise NotImplementedError()
 
 def create_path(target_path):
     if not os.path.exists(target_path):
@@ -228,6 +216,12 @@ def set_plot_style():
     plt.rcParams['pdf.fonttype'] = 42
     plt.rcParams['font.size'] = 10
     plt.rcParams['figure.facecolor'] = 'white'
+    plt.rcParams['figure.constrained_layout.use'] = True
+
+    plt.style.use('science')
+
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.85)     # Add space at top
 
     plt.rcParams.update({'axes.labelpad':0.2,
                         'axes.linewidth':1.0,

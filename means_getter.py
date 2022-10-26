@@ -61,10 +61,10 @@ import pickle
 
 
 
-figurepath = os.path.join(SPATH,'autoPhi\Figures')
 plt.rcParams['pdf.fonttype'] = 42
 plt.rcParams['font.size'] = 24
 
+figurepath = os.path.join(SPATH,'autoPhi\Figures')
 if not os.path.exists(figurepath):
     os.makedirs(figurepath)
 

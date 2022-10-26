@@ -26,7 +26,7 @@ import json
 import os
 import matplotlib
 from HMM_helper_functions import *
-
+from HMM_plotter_functions import *
 
 class AlazarPowerSweepData:
 
@@ -426,5 +426,5 @@ class AlazarPowerSweepData:
         """
         
         print("Starting post-HMM analysis plots.....")
-        #create_HMM_QP_statistics_plots(self.hdf5_file)
+        # create_HMM_QP_statistics_plots(self.hdf5_file)
         print("="*10+"\tHMM ANALYSIS CONCLUDED\t"+"="*10+"\n\n")
