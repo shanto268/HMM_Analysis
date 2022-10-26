@@ -2,25 +2,39 @@ import numpy as np
 import matplotlib.pyplot as plt
 import fitTools.quasiparticleFunctions as qp
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from matplotlib.backends.backend_pdf import PdfPages
 import h5py
 import HMM_helper_functions as hmm_func
-
+import subprocess
+import glob
 
 """
 TO DO:
-- ints, ks, dsr figure out and implement
-- lifetime means plot from data
-- qp.py
-    - lifetime = 1 / transition rate (HMM approach)
-    - dict = qp.extractLifetimes(hmm_qp, time)
-    - fits = qp.fitAndPlotExpDec(dict_key_values)
-- weighted histo
-- run batch code for plots
+- pdf making
 """
+
+def PlotWeightedExpDecay(dist,bins=100):
+    plt.hist(dist,bins,density=True, weights=dist, color="grey", alpha=0.3)
+    plt.xlabel('Time [$\\mu$s]')
+    plt.ylabel("density * $\\overline{\\mu}$")
 
 
 def create_lifetime_distribution(hdf5_file, figpath):
+    with h5py.File(hdf5_file,'r') as fb:
+        for key in list(fb.keys()):
+            try:
+                nEst = fb[key]['Q'][:]
+                sampleRate = fb[key].attrs.get('downsampleRateMHz')
+            except:
+                pass
+    time = np.arange(len(nEst)) / sampleRate
+    lifetimes_dict = qp.extractLifetimes(nEst,time)
+    for key,value in lifetimes_dict.items():
+        qp.fitAndPlotExpDecay(value)
+        plt.title(f"QP Mode: {key}")
+        plt.savefig(figpath+"/"+f"lifetime_of_{key}_qp_distribution.png")
+        plt.close()
+
+def create_weighted_lifetime_distribution(hdf5_file, figpath, numModes):
     with h5py.File(hdf5_file,'r') as fb:
         for key in list(fb.keys()):
             try:           
@@ -30,24 +44,27 @@ def create_lifetime_distribution(hdf5_file, figpath):
                 pass
     time = np.arange(len(nEst)) / sampleRate
     lifetimes_dict = qp.extractLifetimes(nEst,time)
-    print(lifetimes_dict)
     for key,value in lifetimes_dict.items():
-        qp.fitAndPlotExpDecay(value)
+        PlotWeightedExpDecay(value)
         plt.title(f"QP Mode: {key}")
-        plt.savefig(figpath+"/"+f"lifetime_of_{key}_qp_distribution.png")
+        plt.savefig(figpath+"/"+f"weighted_lifetime_of_{key}_qp_distribution.png")
         plt.close()
-
-def create_weighted_lifetime_distribution(hdf5_file, figpath, numModes):
-    raise NotImplementedError()
 
 def create_HMM_QP_statistics_plots(hdf5_file, figpath, numModes):
     hmm_func.set_plot_style()
+    figpath = figpath + f"/post_HMM_fit_plots_M{numModes}"
+    hmm_func.create_path(figpath)
     create_mean_occupation_plot(hdf5_file, figpath)
     create_transition_probability_plot(hdf5_file, figpath, numModes)
     create_transition_rate_plot(hdf5_file, figpath, numModes)
     create_transition_lifetimes_plot(hdf5_file, figpath, numModes)
     create_lifetime_distribution(hdf5_file, figpath)
     create_weighted_lifetime_distribution(hdf5_file, figpath, numModes)
+    # create_summary_plot_pdf(figpath)
+
+
+def create_summary_plot_pdf(figpath):
+    raise NotImplementedError()
 
 def create_mean_occupation_plot(hdf5_file, figpath):
     LOps = []

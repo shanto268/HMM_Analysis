@@ -221,7 +221,6 @@ def set_plot_style():
     plt.style.use('science')
 
     plt.tight_layout()
-    plt.subplots_adjust(top=0.85)     # Add space at top
 
     plt.rcParams.update({'axes.labelpad':0.2,
                         'axes.linewidth':1.0,
