@@ -216,12 +216,8 @@ def set_plot_style():
     plt.rcParams['pdf.fonttype'] = 42
     plt.rcParams['font.size'] = 10
     plt.rcParams['figure.facecolor'] = 'white'
-    plt.rcParams['figure.constrained_layout.use'] = True
-
-    plt.style.use('science')
-
-    plt.tight_layout()
-
+  #  plt.rcParams['figure.constrained_layout.use'] = True
+    plt.style.use(['science','no-latex'])
     plt.rcParams.update({'axes.labelpad':0.2,
                         'axes.linewidth':1.0,
                         'figure.dpi':300.0,
@@ -235,6 +231,7 @@ def set_plot_style():
                         'ytick.major.width':1.0,
                         'axes.ymargin':0.01,
                         'axes.xmargin':0.01})
+   # plt.tight_layout()
 
 
 def sort_files_descending_attenuation(files):
