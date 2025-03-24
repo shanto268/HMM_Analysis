@@ -36,16 +36,17 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from HMM_helper_functions import *
 from HMM_plotter_functions import *
 
-# Try to import GPU-accelerated HMM if available
+# GPU acceleration is disabled by default - set to True only if you have cuML properly installed
 USE_GPU = False
+
+# Check if hmmlearn supports n_jobs parameter (newer versions do)
+HMM_SUPPORTS_PARALLEL = False
 try:
-    import cuml
-    from cuml.mixture import GaussianMixture as GPUHMM
-    USE_GPU = True
-    print("GPU acceleration enabled for HMM fitting")
-except ImportError:
-    print("GPU acceleration not available, using CPU-only mode")
-    pass
+    hmm.GaussianHMM(n_components=2, n_jobs=1)
+    HMM_SUPPORTS_PARALLEL = True
+    print("Using parallel-enabled HMM implementation")
+except TypeError:
+    print("Your hmmlearn version doesn't support parallel processing. Using single-core HMM.")
 
 class AlazarPowerSweepData:
 
@@ -385,7 +386,7 @@ class AlazarPowerSweepData:
         else:
             self.num_cores = n_jobs
             
-        print(f"Processing will use {self.num_cores} CPU cores")
+        print(f"Using {self.num_cores} CPU cores for HMM parallelization")
 
         if self.interactive:
             chosenAtten = int(input("\nAttenuation below which the system goes non-linear: "))
@@ -423,8 +424,8 @@ class AlazarPowerSweepData:
             self.runHMM(means, covars, intTime, SNRmin)
 
     def _process_single_file(self, i, atten, file, means, covars, intTime, SNRmin, skip, savefile, metainfo, hmm_n_jobs=1):
-        """Process a single file with HMM analysis - designed for parallel processing"""
-        print(f"Starting HMM fit for attenuation {atten} (process {os.getpid()})...")
+        """Process a single file with HMM analysis - optimized for parallel HMM fitting"""
+        print(f"Starting HMM fit for attenuation {atten}...")
         start_time = time.time()
         
         n_comp = self.numModes
@@ -474,71 +475,44 @@ class AlazarPowerSweepData:
         plt.savefig(os.path.join(figpath, f'Initial_Guess_IQ_Histogram_{i+skip}_{self.power_to_device[i+skip]}dBm_{n_comp}modes.png'))
         plt.close()
         
-        # Fit the HMM using the appropriate backend (GPU or CPU)
-        if USE_GPU and n_comp <= 10:  # GPU works best with smaller state counts
-            print(f"Using GPU-accelerated HMM for attenuation {atten}")
-            # Create GPU-accelerated model
-            # Note: cuML's GaussianMixture is similar to scikit-learn's GMM, which is like HMM without transitions
-            # This is a simplified approach - for production, you'd need to implement proper HMM on GPU
-            M_gpu = GPUHMM(n_components=n_comp, 
-                         covariance_type=self.hmm_params['covariance_type'],
-                         max_iter=self.hmm_params['n_iter'],
-                         tol=self.hmm_params['tol'],
-                         init_params="random",
-                         verbose=self.hmm_params['verbose'])
-            
-            # Fit the GPU model
-            M_gpu.fit(data.T)
-            
-            # Convert back to CPU HMM model with the learned parameters
+        # Use optimized parallel HMM fitting if supported
+        if HMM_SUPPORTS_PARALLEL:
+            print(f"Fitting HMM for attenuation {atten} using {hmm_n_jobs} CPU cores...")
             M = hmm.GaussianHMM(n_components=n_comp, 
-                              covariance_type=self.hmm_params['covariance_type'],
-                              n_iter=1,  # Just one iteration as we'll use the GPU-learned parameters
-                              init_params="",
-                              verbose=False,
-                              n_jobs=hmm_n_jobs)
-            
-            # Set means and covariances from GPU model
-            M.means_ = M_gpu.means_
-            M.covars_ = M_gpu.covariances_
-            
-            # Set equal starting probabilities
-            M.startprob_ = np.ones(n_comp) / n_comp
-            
-            # Create transition matrix and use it
-            M.transmat_ = self._create_transition_matrix(n_comp)
-            
-            # Do a quick fit to optimize the transition matrix with the GPU-provided means/covars
-            M.fit(data.T)
+                            covariance_type=self.hmm_params['covariance_type'],
+                            n_iter=self.hmm_params['n_iter'],
+                            tol=self.hmm_params['tol'],
+                            init_params="",  # No automatic initialization
+                            verbose=self.hmm_params['verbose'],
+                            n_jobs=hmm_n_jobs)  # Use parameter for HMM-level parallelism
         else:
-            # Use standard CPU-based HMM
+            print(f"Fitting HMM for attenuation {atten} using single-core mode...")
             M = hmm.GaussianHMM(n_components=n_comp, 
-                              covariance_type=self.hmm_params['covariance_type'],
-                              n_iter=self.hmm_params['n_iter'],
-                              tol=self.hmm_params['tol'],
-                              init_params="",  # No automatic initialization
-                              verbose=self.hmm_params['verbose'],
-                              n_jobs=hmm_n_jobs)  # Use parameter for HMM-level parallelism
-                              
-            # Manual initialization of all parameters
-            M.means_ = means
+                            covariance_type=self.hmm_params['covariance_type'],
+                            n_iter=self.hmm_params['n_iter'],
+                            tol=self.hmm_params['tol'],
+                            init_params="",  # No automatic initialization
+                            verbose=self.hmm_params['verbose'])
+                          
+        # Manual initialization of all parameters
+        M.means_ = means
+        
+        # Set covariance based on the processed value
+        if self.hmm_params['covariance_type'] == 'tied':
+            M.covars_ = processed_covars
+        else:
+            M.covars_ = processed_covars
             
-            # Set covariance based on the processed value
-            if self.hmm_params['covariance_type'] == 'tied':
-                M.covars_ = processed_covars
-            else:
-                M.covars_ = processed_covars
-                
-            # Equal starting probabilities
-            M.startprob_ = np.ones(n_comp) / n_comp
-            
-            # Create transition matrix based on the selected model
-            M.transmat_ = self._create_transition_matrix(n_comp)
+        # Equal starting probabilities
+        M.startprob_ = np.ones(n_comp) / n_comp
+        
+        # Create transition matrix based on the selected model
+        M.transmat_ = self._create_transition_matrix(n_comp)
 
-            # Fit the model
-            print(f"Fitting HMM for attenuation {atten}...")
-            M.fit(data.T)
-            print(f"HMM fitting completed for attenuation {atten}")
+        # Fit the model
+        print(f"Fitting HMM for attenuation {atten}...")
+        M.fit(data.T)
+        print(f"HMM fitting completed for attenuation {atten}")
         
         # Read previous data for comparison
         with h5py.File(savefile, 'r') as ff:
@@ -580,63 +554,35 @@ class AlazarPowerSweepData:
                 data, sr = qp.BoxcarDownsample(data, current_intTime, self.sampleRateFromData, returnRate=True)
                 data = qp.uint16_to_mV(data)
                 
-                # Create new model with increased integration time - with GPU support if available
-                if USE_GPU and n_comp <= 10:
-                    # GPU-accelerated approach
-                    M_gpu = GPUHMM(n_components=n_comp, 
-                                 covariance_type=self.hmm_params['covariance_type'],
-                                 max_iter=self.hmm_params['n_iter'],
-                                 tol=self.hmm_params['tol'],
-                                 init_params="random",
-                                 verbose=self.hmm_params['verbose'])
-                    
-                    # Use previous parameters as hints if available
-                    initial_means = None
-                    if i != 0:
-                        with h5py.File(savefile, 'r') as ff:
-                            initial_means = ff[f'ATTEN{self.attens[i+skip-1]}'].attrs.get('HMMmeans_')
-                    
-                    # Fit the GPU model
-                    M_gpu.fit(data.T)
-                    
-                    # Convert to CPU HMM with learned parameters
+                # Create new model with increased integration time
+                if HMM_SUPPORTS_PARALLEL:
                     M = hmm.GaussianHMM(n_components=n_comp, 
                                       covariance_type=self.hmm_params['covariance_type'],
-                                      n_iter=1,
+                                      n_iter=self.hmm_params['n_iter'],
+                                      tol=self.hmm_params['tol'],
                                       init_params="",
-                                      verbose=False,
+                                      verbose=self.hmm_params['verbose'],
                                       n_jobs=hmm_n_jobs)
-                    
-                    # Set parameters from GPU model
-                    M.means_ = M_gpu.means_
-                    M.covars_ = M_gpu.covariances_
-                    M.startprob_ = np.ones(n_comp) / n_comp
-                    M.transmat_ = self._create_transition_matrix(n_comp)
-                    
-                    # Do one quick fit to optimize transitions
-                    M.fit(data.T)
                 else:
-                    # CPU-based approach
                     M = hmm.GaussianHMM(n_components=n_comp, 
-                                       covariance_type=self.hmm_params['covariance_type'],
-                                       n_iter=self.hmm_params['n_iter'],
-                                       tol=self.hmm_params['tol'],
-                                       init_params="",
-                                       verbose=self.hmm_params['verbose'],
-                                       n_jobs=hmm_n_jobs)
-                    
-                    # Get parameters from previous run if available
-                    with h5py.File(savefile, 'r') as ff:
-                        M.means_ = ff[f'ATTEN{self.attens[i+skip-1]}'].attrs.get('HMMmeans_') if i != 0 else means
-                        M.covars_ = ff[f'ATTEN{self.attens[i+skip-1]}'].attrs.get('HMMcovars_') if i != 0 else covars
-                    
-                    # Initialize other parameters
-                    M.startprob_ = np.ones(n_comp) / n_comp
-                    
-                    # Create transition matrix based on the selected model
-                    M.transmat_ = self._create_transition_matrix(n_comp)
-                    
-                    M.fit(data.T)
+                                      covariance_type=self.hmm_params['covariance_type'],
+                                      n_iter=self.hmm_params['n_iter'],
+                                      tol=self.hmm_params['tol'],
+                                      init_params="",
+                                      verbose=self.hmm_params['verbose'])
+                
+                # Get parameters from previous run if available
+                with h5py.File(savefile, 'r') as ff:
+                    M.means_ = ff[f'ATTEN{self.attens[i+skip-1]}'].attrs.get('HMMmeans_') if i != 0 else means
+                    M.covars_ = ff[f'ATTEN{self.attens[i+skip-1]}'].attrs.get('HMMcovars_') if i != 0 else covars
+                
+                # Initialize other parameters
+                M.startprob_ = np.ones(n_comp) / n_comp
+                
+                # Create transition matrix based on the selected model
+                M.transmat_ = self._create_transition_matrix(n_comp)
+                
+                M.fit(data.T)
                 
                 # Get SNR
                 snr01 = qp.getSNRhmm(M, mode1=0, mode2=1)
@@ -879,8 +825,8 @@ class AlazarPowerSweepData:
         return M
 
     def runHMM(self, means, covars, intTime=1, SNRmin=3):
-        matplotlib.use('Agg')  # Use non-interactive backend for parallel processing
-
+        matplotlib.use('Agg')  # Use non-interactive backend for plotting
+        
         skip = np.copy(self.index)
         n_comp = self.numModes
         
@@ -901,79 +847,33 @@ class AlazarPowerSweepData:
                 for key in self.metainfo:
                     g.attrs.create(key, self.metainfo[key])
         
-        # Prepare data for parallel processing
+        # Prepare data for processing
         files_to_process = []
         for i, atten, file in zip(np.arange(len(self.attens[self.index:])), self.attens[self.index:], self.files[self.index:]):
             files_to_process.append((i, atten, file))
         
-        print(f"Starting parallel HMM processing on {self.num_cores} cores for {len(files_to_process)} files...")
+        print(f"Starting HMM processing for {len(files_to_process)} files...")
+        print(f"Using {self.num_cores} CPU cores for HMM-level parallelism")
         
-        # IMPLEMENTATION CHOICE:
-        # Optimize distribution of CPU cores between file parallelism and HMM parallelism
-        
-        num_files = len(files_to_process)
-        
-        # Intelligently distribute cores between file-level and HMM-level parallelism
-        if num_files >= self.num_cores:
-            # Many files, few cores: use all cores for file parallelism
-            file_parallel_jobs = self.num_cores
-            hmm_jobs_per_file = 1
-            use_full_parallel = True
-        elif num_files == 1:
-            # Single file: use all cores for HMM
-            file_parallel_jobs = 1
-            hmm_jobs_per_file = self.num_cores
-            use_full_parallel = False
-        else:
-            # Balance: give each file at least 2 cores if possible
-            hmm_jobs_per_file = max(2, self.num_cores // num_files)
-            file_parallel_jobs = min(num_files, self.num_cores // hmm_jobs_per_file)
-            use_full_parallel = file_parallel_jobs > 1
-        
-        print(f"Parallelization strategy: {file_parallel_jobs} parallel files, {hmm_jobs_per_file} cores per HMM fit")
-        
+        # Process files sequentially with optimized HMM-level parallelism
         HMM = []
+        current_means = means
+        current_covars = covars
         
-        if use_full_parallel:
-            # Option 1: Process files in parallel
-            print("Using file-level parallel processing...")
+        for i, atten, file in files_to_process:
+            print(f"Processing file {i+1}/{len(files_to_process)}: attenuation {atten}")
+            result = self._process_single_file(i, atten, file, current_means, current_covars, 
+                                            intTime, SNRmin, skip, savefile, self.metainfo,
+                                            hmm_n_jobs=self.num_cores)  # Use all cores for each HMM fit
             
-            # Define a wrapper function that will process each file independently
-            def process_file_wrapper(file_tuple, initial_means, initial_covars):
-                i, atten, file = file_tuple
-                return self._process_single_file(i, atten, file, initial_means, initial_covars, 
-                                              intTime, SNRmin, skip, savefile, self.metainfo,
-                                              hmm_n_jobs=hmm_jobs_per_file)
-            
-            # Process all files in parallel
-            results = Parallel(n_jobs=file_parallel_jobs)(
-                delayed(process_file_wrapper)(file_tuple, means, covars) 
-                for file_tuple in files_to_process
-            )
-            
-            # Filter out None results
-            HMM = [result for result in results if result is not None]
-            
-        else:
-            # Option 2: Process files sequentially but with parallel HMM fitting
-            print("Using sequential processing with HMM-level parallelization...")
-            current_means = means
-            current_covars = covars
-            
-            for i, atten, file in files_to_process:
-                print(f"Processing file {i+1}/{len(files_to_process)}: attenuation {atten}")
-                result = self._process_single_file(i, atten, file, current_means, current_covars, 
-                                                intTime, SNRmin, skip, savefile, self.metainfo,
-                                                hmm_n_jobs=hmm_jobs_per_file)
-                
-                if result is not None:
-                    HMM.append(result)
-                    # Update for next iteration
-                    current_means = result.means_
-                    current_covars = result.covars_
-                else:
-                    print(f"Stopping at attenuation {atten} due to conditions not met")
-                    break
+            if result is not None:
+                HMM.append(result)
+                # Update for next iteration
+                current_means = result.means_
+                current_covars = result.covars_
+            else:
+                print(f"Stopping at attenuation {atten} due to conditions not met")
+                break
         
         print("All HMM fits created.....")
         hmm_fits_pdf.close()
