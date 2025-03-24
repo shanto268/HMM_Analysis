@@ -1,13 +1,15 @@
-import numpy as np
-import matplotlib.pyplot as plt
-import fitTools.quasiparticleFunctions as qp
-from mpl_toolkits.axes_grid1 import make_axes_locatable
-import h5py
-import HMM_helper_functions as hmm_func
-import subprocess
 import glob
-from scipy.signal import windows, oaconvolve, savgol_filter
-from scipy.optimize import curve_fit,leastsq
+import subprocess
+
+import fitTools.quasiparticleFunctions as qp
+import h5py
+import matplotlib.pyplot as plt
+import numpy as np
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from scipy.optimize import curve_fit, leastsq
+from scipy.signal import oaconvolve, savgol_filter, windows
+
+import HMM_helper_functions as hmm_func
 
 
 def weightedExp(t,a,tau):
@@ -126,6 +128,7 @@ def create_weighted_lifetime_distribution(hdf5_file, figpath, numModes):
         fitAndPlotWeightedExpDecay(value,key)
         plt.savefig(figpath+"/"+f"weighted_lifetime_of_{key}_qp_distribution.png")
         plt.close()
+
 def create_HMM_QP_statistics_plots(hdf5_file, figpath, numModes):
     hmm_func.set_plot_style()
     figpath = figpath + f"/post_HMM_fit_plots_M{numModes}"

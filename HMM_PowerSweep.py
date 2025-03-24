@@ -1,6 +1,5 @@
 from AlazarPowerSweepData import *
 
-
 if __name__ == "__main__":
     createPdf = True
     intTime=1
@@ -11,4 +10,14 @@ if __name__ == "__main__":
     
     power_sweep_obj.process_Alazar_Data(avgTime=2,plots=createPdf)
     
-    power_sweep_obj.start_HMM_fit(intTime=intTime, SNRmin= SNRmin)
+    # Using new parameters for more control
+    power_sweep_obj.start_HMM_fit(
+        intTime=intTime, 
+        SNRmin=SNRmin,
+        n_jobs=8,                      # Use 8 CPU cores
+        covariance_type="full",        # Use full covariance matrices
+        n_iter=250,                    # Increase max iterations
+        tol=1e-3,                    # Tighter convergence tolerance
+        verbose=True,                  # Show detailed progress
+        transition_model="physics"     # Use physics-informed transition matrix
+    )

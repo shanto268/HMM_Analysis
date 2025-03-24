@@ -18,6 +18,7 @@ import glob
 import json
 import multiprocessing
 import os
+import sys
 import time
 import warnings
 
@@ -59,9 +60,10 @@ class AlazarPowerSweepData:
         # HMM model parameters with defaults
         self.hmm_params = {
             'covariance_type': 'full',
-            'n_iter': 500,        # Maximum number of iterations
+            'n_iter': 150,        # Maximum number of iterations
             'tol': 0.001,         # Convergence tolerance
             'verbose': True,      # Show progress during fitting
+            'transition_model': 'physics'  # 'simple' or 'physics'
         }
         
     def init_message(self):
@@ -249,8 +251,101 @@ class AlazarPowerSweepData:
         else:
             print("Data loaded without creating IQ downsampled plots....")            
 
+    def _create_transition_matrix(self, n_components):
+        """
+        Create an appropriate transition matrix based on the selected model.
+        
+        Args:
+            n_components (int): Number of states/components in the HMM
+            
+        Returns:
+            numpy.ndarray: Transition matrix with probabilities
+        """
+        if self.hmm_params['transition_model'] == 'simple':
+            # Simple uniform transition matrix
+            transmat = np.ones((n_components, n_components)) * 0.01 / (n_components - 1)  # Small transition probability
+            np.fill_diagonal(transmat, 0.99)  # High probability to stay in the same state
+            return transmat
+            
+        elif self.hmm_params['transition_model'] == 'physics':
+            # Physics-informed transition matrix that models quasiparticle dynamics
+            transmat = np.zeros((n_components, n_components))
+            
+            # Diagonal elements (staying in the same state) have high probability
+            for i in range(n_components):
+                # Probability of staying in the same state decreases as state number increases
+                # Higher states (more quasiparticles) are less stable
+                transmat[i, i] = 0.99 - (i * 0.01)
+            
+            # Off-diagonal elements (transitions to other states)
+            for i in range(n_components):
+                remaining_prob = 1.0 - transmat[i, i]
+                for j in range(n_components):
+                    if i != j:
+                        # Higher probability to transition to adjacent states
+                        # and lower probability for distant states
+                        if j > i:
+                            # Transition to higher states (more QPs) - less likely for higher states
+                            transmat[i, j] = remaining_prob * (0.8 / (j - i)) / (n_components - 1)
+                        else:
+                            # Transition to lower states (fewer QPs) - more likely for higher states
+                            transmat[i, j] = remaining_prob * (1.2 / (i - j + 1)) / (n_components - 1)
+            
+            # Normalize rows to ensure each row sums to 1
+            for i in range(n_components):
+                if np.sum(transmat[i, :]) > 0:  # Avoid division by zero
+                    transmat[i, :] = transmat[i, :] / np.sum(transmat[i, :])
+                else:
+                    # Fallback to uniform distribution if all zeros
+                    transmat[i, :] = 1.0 / n_components
+                    
+            return transmat
+        else:
+            # Fallback to simple model with warning
+            warnings.warn(f"Unknown transition model '{self.hmm_params['transition_model']}'. Using 'simple' model instead.")
+            transmat = np.ones((n_components, n_components)) * 0.01 / (n_components - 1)
+            np.fill_diagonal(transmat, 0.99)
+            return transmat
+
+    def _handle_covariance(self, covars, n_components):
+        """
+        Handle covariance matrices based on the covariance type.
+        
+        Args:
+            covars (numpy.ndarray): Initial covariance estimates
+            n_components (int): Number of states/components
+            
+        Returns:
+            numpy.ndarray: Processed covariance matrices
+        """
+        covariance_type = self.hmm_params['covariance_type']
+        
+        if covariance_type == "full":
+            # Each state has its own covariance matrix
+            return covars
+            
+        elif covariance_type == "tied":
+            # For tied covariance, we need a single (n_dim, n_dim) matrix
+            # We'll use the average of all the individual covariances
+            n_dim = covars.shape[1]
+            tied_covar = np.zeros((n_dim, n_dim))
+            for i in range(n_components):
+                tied_covar += covars[i]
+            tied_covar /= n_components
+            return tied_covar
+            
+        elif covariance_type in ["diag", "spherical"]:
+            # These types aren't directly handled here but will be processed by hmmlearn
+            warnings.warn(f"Covariance type '{covariance_type}' might require further processing by hmmlearn.")
+            return covars
+            
+        else:
+            # Fallback to full covariance with warning
+            warnings.warn(f"Unknown covariance type '{covariance_type}'. Using 'full' covariance instead.")
+            return covars
+
     def start_HMM_fit(self, intTime=1, SNRmin=3, targetPower=None, numModes=2, n_jobs=None, 
-                     covariance_type=None, n_iter=None, tol=None, verbose=None):
+                     covariance_type=None, n_iter=None, tol=None, verbose=None, transition_model=None):
         print("\n\n"+"="*10+"\tHMM ANALYSIS STARTED\t"+"="*10)
         
         # Update HMM parameters if provided
@@ -262,12 +357,14 @@ class AlazarPowerSweepData:
             self.hmm_params['tol'] = tol
         if verbose is not None:
             self.hmm_params['verbose'] = verbose
+        if transition_model is not None:
+            self.hmm_params['transition_model'] = transition_model
             
         print(f"HMM parameters: {self.hmm_params}")
         
         # Determine number of cores to use
-        if n_jobs is None:
-            self.num_cores = psutil.cpu_count(logical=False)  # Use physical cores by default
+        if n_jobs is None or n_jobs == -1:
+            self.num_cores = psutil.cpu_count(logical=False)  # Use all cores
         else:
             self.num_cores = n_jobs
             
@@ -323,6 +420,43 @@ class AlazarPowerSweepData:
         data, sr = qp.BoxcarDownsample(data, avgTime=intTime, sampleRate=self.sampleRateFromData, returnRate=True) 
         data = qp.uint16_to_mV(data)
         
+        # Process covariance matrices based on the covariance type
+        processed_covars = self._handle_covariance(covars, n_comp)
+        
+        # 1. Plot initial guessed centers and covariance on IQ histogram (before HMM)
+        plt.figure(figsize=[6, 6])
+        h = qp.plotComplexHist(data[0], data[1], figsize=[6, 6])
+        
+        # Create a custom function to plot the initial guess ellipses
+        def make_ellipses_for_initial_guess(means, covars, ax, colors):
+            for i, (mean, covar) in enumerate(zip(means, covars)):
+                v, w = np.linalg.eigh(covar)
+                v = 2. * np.sqrt(2.) * np.sqrt(v)
+                u = w[0] / np.linalg.norm(w[0])
+                
+                # Plot an ellipse to show the Gaussian component
+                angle = np.arctan(u[1] / u[0])
+                angle = 180. * angle / np.pi  # Convert to degrees
+                ell = plt.matplotlib.patches.Ellipse(mean, v[0], v[1], 180. + angle, 
+                                                   color=colors[i])
+                ell.set_clip_box(ax.bbox)
+                ell.set_alpha(0.5)
+                ax.add_artist(ell)
+                ax.scatter(mean[0], mean[1], s=100, c=colors[i], marker='x')
+                ax.text(mean[0], mean[1], f'State {i}', fontsize=10, 
+                       color=colors[i], ha='center', va='bottom')
+        
+        # Use colormap to create colors for any number of states
+        colormap = plt.cm.tab10
+        colors = [colormap(j/n_comp) for j in range(n_comp)]
+        
+        make_ellipses_for_initial_guess(means, covars, plt.gca(), colors)
+        plt.xlabel('I [mV]')
+        plt.ylabel('Q [mV]')
+        plt.title(f'Initial Guess for {n_comp} states | {self.power_to_device[i+skip]} dBm')
+        plt.savefig(os.path.join(figpath, f'Initial_Guess_IQ_Histogram_{i+skip}_{self.power_to_device[i+skip]}dBm_{n_comp}modes.png'))
+        plt.close()
+        
         # Fit the HMM using the alternative approach with parameterized values
         M = hmm.GaussianHMM(n_components=n_comp, 
                             covariance_type=self.hmm_params['covariance_type'],
@@ -333,14 +467,18 @@ class AlazarPowerSweepData:
                             
         # Manual initialization of all parameters
         M.means_ = means
-        M.covars_ = covars
-        M.startprob_ = np.ones(n_comp) / n_comp  # Equal starting probabilities
         
-        # Set transition matrix based on number of components
-        if n_comp == 3:
-            M.transmat_ = np.array([[0.99, 0.009, 0.001], [0.03, 0.95, 0.02], [0.05, 0.05, 0.9]])
+        # Set covariance based on the processed value
+        if self.hmm_params['covariance_type'] == 'tied':
+            M.covars_ = processed_covars
         else:
-            M.transmat_ = np.array([[0.99, 0.01], [0.01, 0.99]])
+            M.covars_ = processed_covars
+            
+        # Equal starting probabilities
+        M.startprob_ = np.ones(n_comp) / n_comp
+        
+        # Create transition matrix based on the selected model
+        M.transmat_ = self._create_transition_matrix(n_comp)
 
         # Fit the model
         print(f"Fitting HMM for attenuation {atten}...")
@@ -351,19 +489,28 @@ class AlazarPowerSweepData:
         with h5py.File(savefile, 'r') as ff:
             oldrates = ff[f'ATTEN{self.attens[i+skip-1]}/transitionRatesMHz'][:] if i != 0 else 0.0001*np.ones((n_comp, n_comp))
             lifetimes = np.array([1/oldrates[j,j] for j in range(n_comp)])
+            
+            # For SNR check, we'll use transitions between ground state (0) and first excited state (1)
             t01 = 1/oldrates[0,1]
             t10 = 1/oldrates[1,0]
             ttimes = np.array([t01, t10])
 
-        # Check SNR
+        # Check SNR - always use the first two states for SNR check
         snr01 = qp.getSNRhmm(M, mode1=0, mode2=1)
         SNRs = np.array([snr01,])
 
+        # Get state estimates
         logprob, Q = M.decode(data.T)
         Qmean = np.mean(Q)
-        P0 = np.sum(Q == 0)/Q.size
-        P1 = np.sum(Q == 1)/Q.size
-        P2 = np.sum(Q == 2)/Q.size if n_comp > 2 else 0
+        
+        # Calculate state occupations for all states
+        state_occupations = {}
+        for j in range(n_comp):
+            state_occupations[f'P{j}'] = np.sum(Q == j) / Q.size
+        
+        # For backwards compatibility, maintain P0 and P1 variables
+        P0 = state_occupations['P0']
+        P1 = state_occupations['P1'] if n_comp > 1 else 0
         
         # Increase integration time if needed
         current_intTime = intTime
@@ -394,10 +541,8 @@ class AlazarPowerSweepData:
                 # Initialize other parameters
                 M.startprob_ = np.ones(n_comp) / n_comp
                 
-                if n_comp == 3:
-                    M.transmat_ = np.array([[0.99, 0.009, 0.001], [0.03, 0.95, 0.02], [0.05, 0.05, 0.9]])
-                else:
-                    M.transmat_ = np.array([[0.99, 0.01], [0.01, 0.99]])
+                # Create transition matrix based on the selected model
+                M.transmat_ = self._create_transition_matrix(n_comp)
                 
                 M.fit(data.T)
                 
@@ -413,6 +558,9 @@ class AlazarPowerSweepData:
                     print('stuck in loop, exiting')
                     break
                 srold = np.copy(sr)
+                
+                # Update state estimates
+                logprob, Q = M.decode(data.T)
 
         # Check conditions
         if current_intTime > np.min(lifetimes)/2 and i > 3:
@@ -425,14 +573,162 @@ class AlazarPowerSweepData:
         # Plot the fit (offline plotting with Agg backend)
         plt.figure(figsize=[4, 4])
         h = qp.plotComplexHist(data[0], data[1], figsize=[4, 4])
-        if n_comp == 3:
-            qp.make_ellipsesHMM(M, h, ['purple', 'orange', 'green'])
-        else:
-            qp.make_ellipsesHMM(M, h, ['purple', 'orange'])
+        
+        # Use a colormap to generate colors for any number of states
+        colormap = plt.cm.viridis  # viridis is a good colormap that's distinguishable even with many colors
+        colors = [colormap(j/n_comp) for j in range(n_comp)]
+        qp.make_ellipsesHMM(M, h, colors)
+        
         plt.xlabel('I [mV]')
         plt.ylabel('Q [mV]')
         plt.title('HMM fit | {:.2} MHz | {} dBm'.format(sr, self.power_to_device[i+skip]))
         plt.savefig(os.path.join(figpath, 'HMMfits_{}_{}dBm_{}modes.png'.format(i+skip, self.power_to_device[i+skip], self.numModes)))
+        plt.close()
+        
+        # 2. Plot I-Q histogram colored by state after HMM analysis
+        plt.figure(figsize=[6, 6])
+        unique_states = np.unique(Q)
+        colors = plt.cm.tab10(np.linspace(0, 1, len(unique_states)))
+        
+        for state_idx, state in enumerate(unique_states):
+            mask = Q == state
+            plt.scatter(data[0][mask], data[1][mask], s=1, c=[colors[state_idx]], label=f'State {state}')
+            
+        plt.xlabel('I [mV]')
+        plt.ylabel('Q [mV]')
+        plt.title('I-Q Data Colored by HMM State | {:.2} MHz | {} dBm'.format(sr, self.power_to_device[i+skip]))
+        plt.legend()
+        plt.savefig(os.path.join(figpath, 'IQ_by_state_{}_{}dBm_{}modes.png'.format(i+skip, self.power_to_device[i+skip], self.numModes)))
+        plt.close()
+        
+        # 3. Individual and cumulative state IQ plots
+        n_states = len(unique_states)
+        
+        # Individual state plots
+        fig, axes = plt.subplots(1, n_states, figsize=(5*n_states, 5), squeeze=False)
+        
+        for state_idx, state in enumerate(unique_states):
+            ax = axes[0, state_idx]
+            mask = Q == state
+            ax.scatter(data[0][mask], data[1][mask], s=1, c=[colors[state_idx]])
+            ax.set_title(f"State {state}")
+            ax.set_xlabel("I [mV]")
+            ax.set_ylabel("Q [mV]")
+            ax.grid(True)
+            
+            # Add the fitted mean for this state
+            ax.scatter(M.means_[state_idx, 0], M.means_[state_idx, 1], color='red', s=100, marker='x')
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(figpath, 'individual_state_IQ_{}_{}dBm_{}modes.png'.format(i+skip, self.power_to_device[i+skip], self.numModes)))
+        plt.close()
+        
+        # Cumulative state plots
+        fig, axes = plt.subplots(1, n_states, figsize=(5*n_states, 5), squeeze=False)
+        
+        for i_state in range(n_states):
+            ax = axes[0, i_state]
+            
+            # Plot states from 0 to i_state
+            for j in range(i_state+1):
+                state = unique_states[j]
+                mask = Q == state
+                ax.scatter(data[0][mask], data[1][mask], s=1, c=[colors[j]], label=f"State {state}")
+            
+            ax.set_title(f"States 0-{i_state}")
+            ax.set_xlabel("I [mV]")
+            ax.set_ylabel("Q [mV]")
+            ax.grid(True)
+            ax.legend()
+            
+            # Add all relevant means
+            for j in range(i_state+1):
+                ax.scatter(M.means_[j, 0], M.means_[j, 1], color='red', s=100, marker='x')
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(figpath, 'cumulative_state_IQ_{}_{}dBm_{}modes.png'.format(i+skip, self.power_to_device[i+skip], self.numModes)))
+        plt.close()
+        
+        # 4. 1D distributions of I and Q for each state
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+        
+        # I distribution
+        for state_idx, state in enumerate(unique_states):
+            mask = Q == state
+            if np.sum(mask) > 0:  # Only plot if there are points in this state
+                ax1.hist(data[0][mask], bins=50, alpha=0.7, color=colors[state_idx], label=f"State {state}")
+        
+        ax1.set_title(f"I Distribution by State - {self.power_to_device[i+skip]} dBm")
+        ax1.set_xlabel("I [mV]")
+        ax1.set_ylabel("Count")
+        ax1.grid(True)
+        ax1.legend()
+        
+        # Q distribution
+        for state_idx, state in enumerate(unique_states):
+            mask = Q == state
+            if np.sum(mask) > 0:  # Only plot if there are points in this state
+                ax2.hist(data[1][mask], bins=50, alpha=0.7, color=colors[state_idx], label=f"State {state}")
+        
+        ax2.set_title(f"Q Distribution by State - {self.power_to_device[i+skip]} dBm")
+        ax2.set_xlabel("Q [mV]")
+        ax2.set_ylabel("Count")
+        ax2.grid(True)
+        ax2.legend()
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(figpath, 'IQ_1D_distributions_{}_{}dBm_{}modes.png'.format(i+skip, self.power_to_device[i+skip], self.numModes)))
+        plt.close()
+        
+        # Individual I and Q distributions for each state (separate subplots)
+        fig, axes = plt.subplots(2, n_states, figsize=(5*n_states, 10), squeeze=False)
+        
+        # Top row: I distributions for each state
+        for state_idx, state in enumerate(unique_states):
+            ax = axes[0, state_idx]
+            mask = Q == state
+            if np.sum(mask) > 0:  # Only plot if there are points in this state
+                ax.hist(data[0][mask], bins=50, alpha=0.7, color=colors[state_idx])
+                
+                # Add a vertical line at the mean
+                ax.axvline(x=M.means_[state_idx, 0], color='red', linestyle='--', linewidth=2)
+                
+                # Add statistics
+                mean_val = np.mean(data[0][mask])
+                std_val = np.std(data[0][mask])
+                ax.text(0.05, 0.95, f"Mean: {mean_val:.3f}\nStd: {std_val:.3f}", 
+                        transform=ax.transAxes, verticalalignment='top',
+                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+            
+            ax.set_title(f"I Distribution - State {state}")
+            ax.set_xlabel("I [mV]")
+            ax.set_ylabel("Count")
+            ax.grid(True)
+        
+        # Bottom row: Q distributions for each state
+        for state_idx, state in enumerate(unique_states):
+            ax = axes[1, state_idx]
+            mask = Q == state
+            if np.sum(mask) > 0:  # Only plot if there are points in this state
+                ax.hist(data[1][mask], bins=50, alpha=0.7, color=colors[state_idx])
+                
+                # Add a vertical line at the mean
+                ax.axvline(x=M.means_[state_idx, 1], color='red', linestyle='--', linewidth=2)
+                
+                # Add statistics
+                mean_val = np.mean(data[1][mask])
+                std_val = np.std(data[1][mask])
+                ax.text(0.05, 0.95, f"Mean: {mean_val:.3f}\nStd: {std_val:.3f}", 
+                        transform=ax.transAxes, verticalalignment='top',
+                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+            
+            ax.set_title(f"Q Distribution - State {state}")
+            ax.set_xlabel("Q [mV]")
+            ax.set_ylabel("Count")
+            ax.grid(True)
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(figpath, 'individual_IQ_distributions_{}_{}dBm_{}modes.png'.format(i+skip, self.power_to_device[i+skip], self.numModes)))
         plt.close()
 
         # Plot time series
@@ -452,12 +748,11 @@ class AlazarPowerSweepData:
             fp.create_dataset('transitionRatesMHz', data=rates)
             fp.attrs.create('logprobQ', logprob)
             fp.attrs.create('mean', Qmean)
-            fp.attrs.create('P0', P0)
-            fp.attrs.create('P1', P1)
-            try:
-                fp.attrs.create('P2', P2)
-            except:
-                pass
+            
+            # Save occupation probabilities for all states
+            for j in range(n_comp):
+                fp.attrs.create(f'P{j}', state_occupations[f'P{j}'])
+                
             fp.attrs.create('SNRs', SNRs)
             fp.attrs.create('downsampleRateMHz', sr)
             fp.attrs.create('HMMmeans_', M.means_)
@@ -469,6 +764,23 @@ class AlazarPowerSweepData:
 
             for key in metainfo:
                 fp.attrs.create(key, metainfo[key])
+        
+        # Save HMM model parameters as .npz file
+        npz_path = os.path.join(figpath, f'HMM_params_{i+skip}_{self.power_to_device[i+skip]}dBm_{n_comp}modes.npz')
+        np.savez(npz_path, 
+                 means=M.means_, 
+                 covars=M.covars_,
+                 transmat=M.transmat_,
+                 startprob=M.startprob_,
+                 Q=Q,
+                 logprob=logprob,
+                 SNRs=SNRs,
+                 occupation=state_occupations,
+                 rates=rates,
+                 power=self.power_to_device[i+skip],
+                 attenuation=atten,
+                 sampleRate=sr,
+                 num_modes=n_comp)
 
         elapsed = time.time() - start_time
         print(f"Completed HMM fit for attenuation {atten} in {elapsed:.2f} seconds")
@@ -527,6 +839,30 @@ class AlazarPowerSweepData:
         hmm_fits_pdf.close()
         hmm_time_series_pdf.close()
         self.HMM = HMM
+        
+        # Save all HMM models to a single NPZ file
+        if len(HMM) > 0:
+            hmm_models_data = {
+                'num_models': len(HMM),
+                'numModes': self.numModes,
+                'phi': self.phi,
+                'temp': self.temp,
+                'attens': self.attens[self.index:self.index+len(HMM)],
+                'powers': self.power_to_device[self.index:self.index+len(HMM)]
+            }
+            
+            # Add data for each model
+            for i, model in enumerate(HMM):
+                hmm_models_data[f'model{i}_means'] = model.means_
+                hmm_models_data[f'model{i}_covars'] = model.covars_
+                hmm_models_data[f'model{i}_transmat'] = model.transmat_
+                hmm_models_data[f'model{i}_startprob'] = model.startprob_
+            
+            # Save to NPZ file
+            np.savez(
+                os.path.join(self.project_path, 'AnalyisResults', f'HMM_models_M{self.numModes}_T{self.temp}_PHI{str(self.phi).replace(".","p")[:5]}.npz'),
+                **hmm_models_data
+            )
         
         print("Starting post-HMM analysis plots.....")
         create_HMM_QP_statistics_plots(self.hdf5_file, self.figure_path, self.numModes)
