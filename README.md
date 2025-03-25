@@ -42,5 +42,4 @@
 
 ## To Do:
 
-- [ ] Automate extraction of means
 - [ ] Automate the determination for attenuation below which the system is non-linear

@@ -131,6 +131,71 @@ class AlazarPowerSweepData:
         plt.close()
         return means, data
 
+    def get_automatic_QP_means(self, avgTime=3):
+        """
+        Automatically estimate initial HMM state means using K-means clustering.
+        
+        This method replaces manual selection of means with automated clustering,
+        which is faster and more reproducible than manual selection.
+        
+        Args:
+            avgTime (float): Time in microseconds to average data for downsampling
+            
+        Returns:
+            tuple: (means, data) where means is array of state centers and data is the IQ data
+        """
+        try:
+            from sklearn.cluster import KMeans
+        except ImportError:
+            print("Warning: sklearn not installed. Falling back to manual means selection.")
+            return self.get_QP_means_from_IQ(avgTime)
+            
+        print("Automatically determining initial means using K-means clustering...")
+        
+        # Load and process the data
+        data = qp.loadAlazarData(self.files[self.index])
+        data, sr = qp.BoxcarDownsample(data, avgTime, sampleRate=self.sampleRateFromData, returnRate=True)
+        data = qp.uint16_to_mV(data)
+        
+        # Prepare data for K-means (reshape to [n_samples, n_features])
+        iq_data = np.vstack([data[0], data[1]]).T
+        
+        # Run K-means clustering
+        kmeans = KMeans(
+            n_clusters=self.numModes,
+            init='k-means++',  # Smart initialization for faster convergence
+            n_init=10,         # Run multiple initializations and pick best
+            max_iter=300,      # Maximum iterations for each initialization
+            tol=1e-4,          # Convergence tolerance
+            random_state=2    # For reproducibility
+        )
+        
+        # Fit K-means model
+        kmeans.fit(iq_data)
+        
+        # Get cluster centers as initial means
+        means = kmeans.cluster_centers_
+        
+        # Plot the results to show the user
+        plt.figure(figsize=[6, 6])
+        h = qp.plotComplexHist(data[0], data[1], figsize=[6, 6])
+        
+        # Plot cluster centers
+        plt.scatter(means[:, 0], means[:, 1], c='red', s=100, marker='x')
+        for i, mean in enumerate(means):
+            plt.text(mean[0], mean[1], f'State {i}', fontsize=12, 
+                    color='red', ha='center', va='bottom')
+        
+        plt.title(f'Automatic K-means Clustering: {self.numModes} States')
+        plt.xlabel('I [mV]')
+        plt.ylabel('Q [mV]')
+        
+        # Save the figure for reference
+        plt.savefig(os.path.join(self.figure_path, f'KMeans_Initial_Means_{self.numModes}modes_{self.timestamp}.png'))
+        plt.show()
+        
+        print(f"K-means clustering complete. Found {self.numModes} cluster centers.")
+        return means, data
 
     def get_initial_QP_means(self, avgTime=3):
         if self.interactive:
@@ -139,7 +204,8 @@ class AlazarPowerSweepData:
             try:
                 return get_QP_means(self.project_root, self.phi, self.numModes), None
             except:
-                return self.get_QP_means_from_IQ(avgTime)
+                # Use automatic means detection instead of manual selection in non-interactive mode
+                return self.get_automatic_QP_means(avgTime)
 
     def estimate_initial_covariances(self, I, Q, initial_means):
         """
@@ -362,10 +428,21 @@ class AlazarPowerSweepData:
             tied_covar /= n_components
             return tied_covar
             
-        elif covariance_type in ["diag", "spherical"]:
-            # These types aren't directly handled here but will be processed by hmmlearn
-            warnings.warn(f"Covariance type '{covariance_type}' might require further processing by hmmlearn.")
-            return covars
+        elif covariance_type == "diag":
+            # For diagonal covariance, extract the diagonals from each covariance matrix
+            n_dim = covars.shape[1]
+            diag_covars = np.zeros((n_components, n_dim))
+            for i in range(n_components):
+                diag_covars[i] = np.diag(covars[i])
+            return diag_covars
+            
+        elif covariance_type == "spherical":
+            # For spherical covariance, use the average of diagonal elements
+            n_dim = covars.shape[1]
+            spherical_covars = np.zeros(n_components)
+            for i in range(n_components):
+                spherical_covars[i] = np.mean(np.diag(covars[i]))
+            return spherical_covars
             
         else:
             # Fallback to full covariance with warning
@@ -373,9 +450,40 @@ class AlazarPowerSweepData:
             return covars
 
     def start_HMM_fit(self, intTime=1, SNRmin=3, targetPower=None, numModes=2, n_jobs=None, 
-                     covariance_type=None, n_iter=None, tol=None, verbose=None, transition_model=None):
-
+                     covariance_type=None, n_iter=None, tol=None, verbose=None, transition_model=None,
+                     fast_mode=False, auto_means=False):
+        """
+        Start the HMM fitting process with optimized performance options.
+        
+        Args:
+            intTime (float): Integration time in microseconds
+            SNRmin (float): Minimum SNR threshold
+            targetPower (float): Target power to device in dB
+            numModes (int): Number of HMM states to fit
+            n_jobs (int): Number of CPU cores to use (-1 for all cores)
+            covariance_type (str): Covariance type ('full', 'diag', 'spherical', 'tied')
+            n_iter (int): Maximum number of EM iterations
+            tol (float): Convergence tolerance
+            verbose (bool): Whether to print progress during fitting
+            transition_model (str): Model for transition matrix ('simple' or 'physics')
+            fast_mode (bool): Whether to use optimized parameters for faster fitting
+            auto_means (bool): Whether to use automatic mean estimation with K-means
+        """
         print("\n\n"+"="*10+"\tHMM ANALYSIS STARTED\t"+"="*10)
+        
+        # Apply fast mode settings if requested
+        if fast_mode:
+            print("Fast mode enabled. Using optimized parameters for speed.")
+            if covariance_type is None:
+                covariance_type = 'diag'  # Diagonal covariance is faster than full
+            if n_iter is None:
+                n_iter = 50  # Fewer iterations for faster convergence
+            if tol is None:
+                tol = 1e-2  # Higher tolerance for earlier stopping
+            if transition_model is None:
+                transition_model = 'simple'  # Simpler transition model is faster
+            if verbose is None:
+                verbose = False  # Less output for faster processing
         
         # Update HMM parameters if provided
         if covariance_type is not None:
@@ -412,7 +520,12 @@ class AlazarPowerSweepData:
             self.numModes = int(input("\nNumber of Modes you want to fit: "))
             set_qt_backend()
 
-            means, data = self.get_initial_QP_means()
+            # Choose automatic or manual means selection
+            if auto_means:
+                means, data = self.get_automatic_QP_means()
+            else:
+                means, data = self.get_initial_QP_means()
+                
             covars = self.get_initial_QP_covars(data, means)
             print(f"Extracted Means:\n{means}\n\nEstimated Covariance:\n{covars}\n")
             print("\nStarting HMM Analysis.....\n\n")
@@ -422,8 +535,11 @@ class AlazarPowerSweepData:
             # Ask user to input the power to the device
             self.power_to_device = float(input("\nInput the Power to the device (in dB): "))
             self.metainfo = self.set_metadata()
-            self.index = int(np.where(self.power_to_device == targetPower)[0])
-
+            try:
+                self.index = int(np.where(self.power_to_device == targetPower)[0])
+            except:
+                self.index = 0
+                
             chosenAtten = self.attens[self.index]
             print("\nThe chosen power to the device is {} dBM at the attenuation {}".format(self.power_to_device - chosenAtten, chosenAtten))
 
@@ -431,7 +547,12 @@ class AlazarPowerSweepData:
             print(f"\nNumber of Modes to be fit: {self.numModes}")
             set_qt_backend()
 
-            means, data = self.get_initial_QP_means()
+            # Always use automatic means in non-interactive mode when fast_mode is enabled
+            if auto_means or fast_mode:
+                means, data = self.get_automatic_QP_means()
+            else:
+                means, data = self.get_initial_QP_means()
+                
             covars = self.get_initial_QP_covars(data, means)
             print(f"Extracted Means:\n{means}\n\nEstimated Covariance:\n{covars}\n")
             print("\nStarting HMM Analysis.....\n\n")
@@ -455,6 +576,31 @@ class AlazarPowerSweepData:
         data, sr = qp.BoxcarDownsample(data, avgTime=intTime, sampleRate=self.sampleRateFromData, returnRate=True) 
         data = qp.uint16_to_mV(data)
         n_dim = data.shape[0]
+        
+        # For faster processing, consider downsampling the data further if it's very large
+        data_size = data.shape[1]
+        if data_size > 100000 and self.hmm_params.get('covariance_type') in ['diag', 'spherical']:
+            # For faster types, we can safely use more data
+            max_points = 100000
+        elif data_size > 50000 and self.hmm_params.get('covariance_type') == 'tied':
+            # For tied covariance, use moderate amount
+            max_points = 50000
+        elif data_size > 30000 and self.hmm_params.get('covariance_type') == 'full':
+            # For full covariance, use fewer points
+            max_points = 30000
+        else:
+            # If data is already small enough, use all points
+            max_points = data_size
+            
+        if data_size > max_points:
+            # Downsample to reasonable size to speed up processing
+            print(f"Downsampling data from {data_size} to {max_points} points for faster processing")
+            step = data_size // max_points
+            data = data[:, ::step]
+            print(f"New data shape: {data.shape}")
+        
+        # Prepare data for HMM (transpose to [n_samples, n_features])
+        hmm_data = data.T
         
         # Process covariance matrices based on the covariance type
         processed_covars = self._handle_covariance(covars, n_comp)
@@ -525,7 +671,7 @@ class AlazarPowerSweepData:
                 tied_covar += processed_covars[i]
             tied_covar /= n_comp
             M.covars_ = tied_covar
-        elif self.hmm_params['covariance_type'] == "full" :
+        elif self.hmm_params['covariance_type'] in ["full", "diag", "spherical"]:
             M.covars_ = processed_covars
             
         # Equal starting probabilities
@@ -536,8 +682,10 @@ class AlazarPowerSweepData:
 
         # Fit the model
         print(f"Fitting HMM for attenuation {atten}...")
-        M.fit(data.T)
-        print(f"The HMM fitting has been completed for attenuation {atten}")
+        fit_start_time = time.time()
+        M.fit(hmm_data)
+        fit_duration = time.time() - fit_start_time
+        print(f"The HMM fitting has been completed for attenuation {atten} in {fit_duration:.2f} seconds")
         
         # Read previous data for comparison
         with h5py.File(savefile, 'r') as ff:
@@ -551,10 +699,11 @@ class AlazarPowerSweepData:
 
         # Check SNR - always use the first two states for SNR check
         snr01 = qp.getSNRhmm(M, mode1=0, mode2=1)
+        print(f"SNR01: {snr01}")
         SNRs = np.array([snr01,])
 
         # Get state estimates
-        logprob, Q = M.decode(data.T)
+        logprob, Q = M.decode(hmm_data)
         Qmean = np.mean(Q)
         
         # Calculate state occupations for all states
@@ -956,3 +1105,4 @@ class AlazarPowerSweepData:
         create_HMM_QP_statistics_plots(self.hdf5_file, self.figure_path, self.numModes)
         print(f"Analysis completed with timestamp: {self.timestamp}")
         print("="*10+"\tHMM ANALYSIS CONCLUDED\t"+"="*10+"\n\n")
+
