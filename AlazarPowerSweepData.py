@@ -24,6 +24,7 @@ import sys
 import time
 import warnings
 
+import fitTools.quasiparticleFunctions as qp
 import h5py
 import matplotlib
 import matplotlib.pyplot as plt
@@ -35,7 +36,6 @@ from matplotlib.backends.backend_pdf import PdfPages
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from tqdm import tqdm, trange
 
-import quasiparticleFunctions as qp
 from HMM_helper_functions import *
 from HMM_plotter_functions import *
 
@@ -58,7 +58,13 @@ class AlazarPowerSweepData:
         # Create a timestamp string for unique file identification
         self.timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         # Add timestamp to figure path
-        self.figure_path = os.path.join(project_path, f"PowerSweepfigures_{self.timestamp}")
+        self.figure_path = os.path.join(project_path, f"PowerSweepfigures")
+        self.figure_path = os.path.join(self.figure_path, f"{self.timestamp}")
+        # Create the figure path directory immediately
+        if not os.path.exists(self.figure_path):
+            os.makedirs(self.figure_path)
+            print(f"Created figure directory: {self.figure_path}")
+            
         self.files = glob.glob(r"{}\**\*.bin".format(self.project_path),recursive=True)
         self.interactive = interactive
         self.project_root = project_root
@@ -189,11 +195,15 @@ class AlazarPowerSweepData:
         plt.title(f'Automatic K-means Clustering: {self.numModes} States')
         plt.xlabel('I [mV]')
         plt.ylabel('Q [mV]')
-        
+            
         # Save the figure for reference
-        plt.savefig(os.path.join(self.figure_path, f'KMeans_Initial_Means_{self.numModes}modes_{self.timestamp}.png'))
-        plt.show()
-        
+        try:
+            fig_path = os.path.join(self.figure_path, f'KMeans_Initial_Means_{self.numModes}modes_{self.timestamp}.png')
+            plt.savefig(fig_path)
+            plt.close()
+            print(f"Saved K-means clustering figure to: {fig_path}")
+        except:
+            print("Failed to save K-means clustering figure.")
         print(f"K-means clustering complete. Found {self.numModes} cluster centers.")
         return means, data
 
@@ -319,15 +329,26 @@ class AlazarPowerSweepData:
         self.temp = get_temp_from_run(self.files[0])
 
     def process_Alazar_Data(self, avgTime=2, plots=True):
-        print("Creating figure paths.....")
-        create_path(self.figure_path)
-        print("Reading and sorting data files.....")
-
+        """
+        Process Alazar data files and optionally create IQ plots.
+        
+        Args:
+            avgTime (float): Time in microseconds to average data for downsampling
+            plots (bool): Whether to create IQ plots of the data
+        """
+        print("Setting up directories and paths...")
+        
+        # Ensure figure path exists
+        if not os.path.exists(self.figure_path):
+            os.makedirs(self.figure_path)
+            print(f"Created figure directory: {self.figure_path}")
+            
+        print("Reading and sorting data files...")
         self.files, self.attens = sort_files_ascending_attenuation(self.files)
         convert_to_json(self.files)
 
         set_plot_style()
-        print("Reading and updating the metadata.....")
+        print("Reading and updating the metadata...")
 
         update_metainfo(self.files[0])
 
@@ -336,14 +357,20 @@ class AlazarPowerSweepData:
         self.temp = get_temp_from_run(self.files[0])
 
         if plots:
-            print(f"Creating IQ downsampled plots with timestamp {self.timestamp}.....")            
+            print(f"Creating IQ downsampled plots with timestamp {self.timestamp}...")            
             # Create a timestamped directory for IQ plots
             iq_plot_dir = os.path.join(self.project_path, f"IQ_Plots_{self.timestamp}")
             if not os.path.exists(iq_plot_dir):
                 os.makedirs(iq_plot_dir)
-            create_IQ_downsampled_plots(self.files, self.attens, iq_plot_dir, avgTime)
+                print(f"Created IQ plots directory: {iq_plot_dir}")
+                
+            try:
+                create_IQ_downsampled_plots(self.files, self.attens, iq_plot_dir, avgTime)
+                print(f"Successfully created IQ plots in {iq_plot_dir}")
+            except Exception as e:
+                print(f"Warning: Failed to create IQ plots: {str(e)}")
         else:
-            print("Data loaded without creating IQ downsampled plots....")            
+            print("Skipping IQ downsampled plots as requested.")
 
     def _create_transition_matrix(self, n_components):
         """
@@ -469,96 +496,141 @@ class AlazarPowerSweepData:
             fast_mode (bool): Whether to use optimized parameters for faster fitting
             auto_means (bool): Whether to use automatic mean estimation with K-means
         """
-        print("\n\n"+"="*10+"\tHMM ANALYSIS STARTED\t"+"="*10)
-        
-        # Apply fast mode settings if requested
-        if fast_mode:
-            print("Fast mode enabled. Using optimized parameters for speed.")
-            if covariance_type is None:
-                covariance_type = 'diag'  # Diagonal covariance is faster than full
-            if n_iter is None:
-                n_iter = 50  # Fewer iterations for faster convergence
-            if tol is None:
-                tol = 1e-2  # Higher tolerance for earlier stopping
-            if transition_model is None:
-                transition_model = 'simple'  # Simpler transition model is faster
-            if verbose is None:
-                verbose = False  # Less output for faster processing
-        
-        # Update HMM parameters if provided
-        if covariance_type is not None:
-            self.hmm_params['covariance_type'] = covariance_type
-        if n_iter is not None:
-            self.hmm_params['n_iter'] = n_iter
-        if tol is not None:
-            self.hmm_params['tol'] = tol
-        if verbose is not None:
-            self.hmm_params['verbose'] = verbose
-        if transition_model is not None:
-            self.hmm_params['transition_model'] = transition_model
+        try:
+            print("\n\n"+"="*10+"\tHMM ANALYSIS STARTED\t"+"="*10)
             
-        print(f"HMM parameters: {self.hmm_params}")
-        
-        # Determine number of cores to use
-        if n_jobs is None or n_jobs == -1:
-            self.num_cores = psutil.cpu_count(logical=True)  # Use all logical cores
-        else:
-            self.num_cores = n_jobs
+            # Make sure figure directory exists
+            if not os.path.exists(self.figure_path):
+                os.makedirs(self.figure_path)
+                print(f"Created figure directory: {self.figure_path}")
             
-        print(f"Using {self.num_cores} CPU cores for HMM parallelization")
-
-        if self.interactive:
-            chosenAtten = int(input("\nAttenuation below which the system goes non-linear: "))
-            # self.power_to_device = self.set_attenuation_configuration()
-            self.power_to_device = float(input("\nInput the Power to the device (in dB): "))
-
-            self.metainfo = self.set_metadata()
-
-            self.index = int(np.where(self.attens == chosenAtten)[0])
-            print("\nThe power to the device is {} dBM at the chosen attenuation {}".format(self.power_to_device - chosenAtten, chosenAtten))
-
-            self.numModes = int(input("\nNumber of Modes you want to fit: "))
-            set_qt_backend()
-
-            # Choose automatic or manual means selection
-            if auto_means:
-                means, data = self.get_automatic_QP_means()
+            # Apply fast mode settings if requested
+            if fast_mode:
+                print("Fast mode enabled. Using optimized parameters for speed.")
+                if covariance_type is None:
+                    covariance_type = 'diag'  # Diagonal covariance is faster than full
+                if n_iter is None:
+                    n_iter = 50  # Fewer iterations for faster convergence
+                if tol is None:
+                    tol = 1e-2  # Higher tolerance for earlier stopping
+                if transition_model is None:
+                    transition_model = 'simple'  # Simpler transition model is faster
+                if verbose is None:
+                    verbose = False  # Less output for faster processing
+            
+            # Update HMM parameters if provided
+            if covariance_type is not None:
+                self.hmm_params['covariance_type'] = covariance_type
+            if n_iter is not None:
+                self.hmm_params['n_iter'] = n_iter
+            if tol is not None:
+                self.hmm_params['tol'] = tol
+            if verbose is not None:
+                self.hmm_params['verbose'] = verbose
+            if transition_model is not None:
+                self.hmm_params['transition_model'] = transition_model
+                
+            print(f"HMM parameters: {self.hmm_params}")
+            
+            # Determine number of cores to use
+            if n_jobs is None or n_jobs == -1:
+                self.num_cores = psutil.cpu_count(logical=True)  # Use all logical cores
             else:
-                means, data = self.get_initial_QP_means()
+                self.num_cores = n_jobs
                 
-            covars = self.get_initial_QP_covars(data, means)
-            print(f"Extracted Means:\n{means}\n\nEstimated Covariance:\n{covars}\n")
-            print("\nStarting HMM Analysis.....\n\n")
-            self.runHMM(means, covars, intTime, SNRmin)
-        else:
-            # self.power_to_device = self.set_attenuation_configuration()
-            # Ask user to input the power to the device
-            self.power_to_device = float(input("\nInput the Power to the device (in dB): "))
-            self.metainfo = self.set_metadata()
-            try:
-                self.index = int(np.where(self.power_to_device == targetPower)[0])
-            except:
-                self.index = 0
-                
-            chosenAtten = self.attens[self.index]
-            print("\nThe chosen power to the device is {} dBM at the attenuation {}".format(self.power_to_device - chosenAtten, chosenAtten))
+            print(f"Using {self.num_cores} CPU cores for HMM parallelization")
+            
+            # Check if any data files were found
+            if len(self.files) == 0:
+                raise FileNotFoundError(f"No .bin files found in {self.project_path}. Please check the path.")
 
-            self.numModes = numModes
-            print(f"\nNumber of Modes to be fit: {self.numModes}")
-            set_qt_backend()
+            if self.interactive:
+                try:
+                    chosenAtten = int(input("\nAttenuation below which the system goes non-linear: "))
+                    # self.power_to_device = self.set_attenuation_configuration()
+                    self.power_to_device = float(input("\nInput the Power to the device (in dB): "))
 
-            # Always use automatic means in non-interactive mode when fast_mode is enabled
-            if auto_means or fast_mode:
-                means, data = self.get_automatic_QP_means()
+                    self.metainfo = self.set_metadata()
+
+                    self.index = int(np.where(self.attens == chosenAtten)[0])
+                    print("\nThe power to the device is {} dBM at the chosen attenuation {}".format(self.power_to_device - chosenAtten, chosenAtten))
+
+                    self.numModes = int(input("\nNumber of Modes you want to fit: "))
+                    set_qt_backend()
+
+                    # Choose automatic or manual means selection
+                    if auto_means:
+                        means, data = self.get_automatic_QP_means()
+                    else:
+                        means, data = self.get_initial_QP_means()
+                        
+                    covars = self.get_initial_QP_covars(data, means)
+                    print(f"Extracted Means:\n{means}\n\nEstimated Covariance:\n{covars}\n")
+                    print("\nStarting HMM Analysis.....\n\n")
+                    self.runHMM(means, covars, intTime, SNRmin)
+                except ValueError as e:
+                    print(f"Error during interactive setup: {str(e)}")
+                    print("Please check your input values and try again.")
+                    raise
             else:
-                means, data = self.get_initial_QP_means()
-                
-            covars = self.get_initial_QP_covars(data, means)
-            print(f"Extracted Means:\n{means}\n\nEstimated Covariance:\n{covars}\n")
-            print("\nStarting HMM Analysis.....\n\n")
-            self.runHMM(means, covars, intTime, SNRmin)
+                try:
+                    # self.power_to_device = self.set_attenuation_configuration()
+                    # Ask user to input the power to the device
+                    self.power_to_device = float(input("\nInput the Power to the device (in dB): "))
+                    self.metainfo = self.set_metadata()
+                    try:
+                        if targetPower is None:
+                            self.index = 0
+                            print("No target power specified. Using the first file.")
+                        else:
+                            # Try to find the exact match first
+                            match_idx = np.where(self.power_to_device == targetPower)[0]
+                            if len(match_idx) > 0:
+                                self.index = int(match_idx[0])
+                            else:
+                                # If no exact match, find closest
+                                print(f"No exact match for {targetPower} dB. Finding closest value...")
+                                self.index = np.argmin(np.abs(self.power_to_device - targetPower))
+                    except Exception as e:
+                        print(f"Error finding power match: {str(e)}. Using index 0.")
+                        self.index = 0
+                        
+                    if self.index >= len(self.attens):
+                        print(f"Warning: Index {self.index} is out of range for attenuations array. Using index 0.")
+                        self.index = 0
+                        
+                    chosenAtten = self.attens[self.index]
+                    print("\nThe chosen power to the device is {} dBM at the attenuation {}".format(self.power_to_device - chosenAtten, chosenAtten))
 
-        print(f"Analysis completed with timestamp: {self.timestamp}")
+                    self.numModes = numModes
+                    print(f"\nNumber of Modes to be fit: {self.numModes}")
+                    set_qt_backend()
+
+                    # Always use automatic means in non-interactive mode when fast_mode is enabled
+                    if auto_means or fast_mode:
+                        means, data = self.get_automatic_QP_means()
+                    else:
+                        means, data = self.get_initial_QP_means()
+                        
+                    covars = self.get_initial_QP_covars(data, means)
+                    print(f"Extracted Means:\n{means}\n\nEstimated Covariance:\n{covars}\n")
+                    print("\nStarting HMM Analysis.....\n\n")
+                    self.runHMM(means, covars, intTime, SNRmin)
+                except Exception as e:
+                    print(f"Error during non-interactive setup: {str(e)}")
+                    raise
+
+            print(f"Analysis completed with timestamp: {self.timestamp}")
+            
+        except Exception as e:
+            print(f"Error in HMM analysis: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            print("\nTry using the following options for better compatibility:")
+            print("1. Set auto_means=True to use K-means clustering instead of manual mean selection")
+            print("2. Use fast_mode=True for more reliable performance settings")
+            print("3. Check that your project_path contains valid .bin files")
+            raise
 
     def _process_single_file(self, i, atten, file, means, covars, intTime, SNRmin, skip, savefile, metainfo, hmm_n_jobs=1):
         """Process a single file with HMM analysis - optimized for parallel HMM fitting"""
@@ -1010,7 +1082,8 @@ class AlazarPowerSweepData:
         hmm_time_series_pdf = PdfPages('{}/HMM_time_series_{}modes_{}.pdf'.format(self.project_path, self.numModes, self.timestamp))
         
         # Set up HDF5 file with timestamp
-        analysis_dir = os.path.join(self.project_path, 'AnalysisResults_{}'.format(self.timestamp))
+        analysis_dir = os.path.join(self.project_path, 'AnalysisResults')
+        analysis_dir = os.path.join(analysis_dir, f"{self.timestamp}")
         if not os.path.exists(analysis_dir):
             os.makedirs(analysis_dir)
             
