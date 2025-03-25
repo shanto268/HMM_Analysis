@@ -845,8 +845,17 @@ class AlazarPowerSweepData:
             
             # 1. Plot initial guessed centers and covariance on IQ histogram (before HMM)
             try:
-                fig = plt.figure(figsize=(6, 6))
-                h = qp.plotComplexHist(data[0], data[1], figsize=(6, 6))
+                # Create figure without constrained_layout
+                fig = plt.figure(figsize=(6, 6), constrained_layout=False)
+                h = plt.axes()
+                
+                # Create 2D histogram manually
+                hist_data = plt.hist2d(data[0], data[1], bins=80, 
+                                    norm=matplotlib.colors.LogNorm(), 
+                                    cmap=plt.cm.Greys)
+                plt.colorbar(hist_data[3], shrink=0.9, extend='both')
+                plt.grid(True)
+                plt.gca().set_aspect('equal')
                 
                 # Create a custom function to plot the initial guess ellipses
                 def make_ellipses_for_initial_guess(means, covars, colors):
@@ -858,12 +867,13 @@ class AlazarPowerSweepData:
                         # Plot an ellipse to show the Gaussian component
                         angle = np.arctan(u[1] / u[0])
                         angle = 180. * angle / np.pi  # Convert to degrees
-                        ell = plt.matplotlib.patches.Ellipse(mean, v[0], v[1], 180. + angle, 
-                                                           color=colors[i])
+                        ell = matplotlib.patches.Ellipse(mean, v[0], v[1], 180. + angle, 
+                                                       color=colors[i])
                         ell.set_clip_box(plt.gca().bbox)
                         ell.set_alpha(0.5)
                         plt.gca().add_artist(ell)
-                        plt.scatter(mean[0], mean[1], s=100, c=colors[i], marker='x')
+                        # Use array format for colors to avoid warning
+                        plt.scatter(mean[0], mean[1], s=100, color=colors[i], marker='x')
                         plt.text(mean[0], mean[1], f'State {i}', fontsize=10, 
                                color=colors[i], ha='center', va='bottom')
                 
@@ -876,7 +886,7 @@ class AlazarPowerSweepData:
                 plt.ylabel('Q [mV]')
                 plt.title(f'Initial Guess for {n_comp} states | {self.power_to_device - self.attens[i+skip]} dBm')
                 
-                # Avoid tight_layout - use subplots_adjust instead
+                # Use subplots_adjust safely
                 plt.subplots_adjust(right=0.85, top=0.9, bottom=0.1, left=0.1)
                 
                 # Add timestamp to file name
@@ -1087,21 +1097,50 @@ class AlazarPowerSweepData:
 
             # Plot the fit (offline plotting with Agg backend)
             try:
-                fig = plt.figure(figsize=(4, 4))
-                h = qp.plotComplexHist(data[0], data[1], figsize=(4, 4))
+                # Create figure without constrained_layout
+                fig = plt.figure(figsize=(4, 4), constrained_layout=False)
+                ax = plt.axes()
+                
+                # Create 2D histogram manually
+                hist_data = plt.hist2d(data[0], data[1], bins=80, 
+                                   norm=matplotlib.colors.LogNorm(), 
+                                   cmap=plt.cm.Greys)
+                plt.colorbar(hist_data[3], shrink=0.9, extend='both')
+                plt.grid(True)
+                plt.gca().set_aspect('equal')
                 
                 # Use a colormap to generate colors for any number of states
                 colormap = plt.cm.viridis  # viridis is a good colormap that's distinguishable even with many colors
                 colors = [colormap(j/n_comp) for j in range(n_comp)]
                 
-                # Make ellipses - using updated function with axis parameter
-                qp.make_ellipsesHMM(M, h, colors)
+                # Create ellipses manually similar to make_ellipsesHMM
+                for n, color in enumerate(colors):
+                    try:
+                        # get the covariance matrix for this state
+                        covariances = M.covars_[n][:2,:2]
+                        # get eigenvalues and eigenvectors
+                        v, w = np.linalg.eigh(covariances)
+                        # normalize the eigenvector
+                        u = w[0] / np.linalg.norm(w[0])
+                        # get the angle
+                        angle = 180*np.arctan2(u[1],u[0])/np.pi
+                        # scale the eigenvalues for the ellipse
+                        v = 2. * np.sqrt(v)
+                        # create the ellipse
+                        ell = matplotlib.patches.Ellipse(M.means_[n,:2], v[0], v[1], 180+angle, 
+                                                      color=color, fill=False)
+                        ell.set_clip_box(plt.gca().bbox)
+                        ell.set_alpha(0.8)
+                        plt.gca().add_artist(ell)
+                    except Exception as e:
+                        print(f"Warning: Error creating ellipse for state {n}: {str(e)}")
+                        continue
                 
                 plt.xlabel('I [mV]')
                 plt.ylabel('Q [mV]')
                 plt.title('HMM fit | {:.2} MHz | {} dBm'.format(sr, self.power_to_device - self.attens[i+skip]))
                 
-                # Avoid tight_layout - use subplots_adjust instead
+                # Use subplots_adjust safely
                 plt.subplots_adjust(right=0.85, top=0.9, bottom=0.1, left=0.1)
                 
                 hmm_fit_path = os.path.join(figpath, f'HMMfits_{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png')
@@ -1114,20 +1153,28 @@ class AlazarPowerSweepData:
             
             # 2. Plot I-Q histogram colored by state after HMM analysis
             try:
-                fig = plt.figure(figsize=(6, 6))
+                # Create figure without constrained_layout
+                fig = plt.figure(figsize=(6, 6), constrained_layout=False)
+                ax = plt.axes()
+                
+                # Get unique states and create color map
                 unique_states = np.unique(Q)
                 colors = plt.cm.tab10(np.linspace(0, 1, len(unique_states)))
                 
+                # Plot each state with a different color
                 for state_idx, state in enumerate(unique_states):
                     mask = Q == state
-                    plt.scatter(data[0][mask], data[1][mask], s=1, c=[colors[state_idx]], label=f'State {state}')
+                    plt.scatter(data[0][mask], data[1][mask], s=1, color=colors[state_idx], 
+                               label=f'State {state}')
                     
                 plt.xlabel('I [mV]')
                 plt.ylabel('Q [mV]')
                 plt.title('I-Q Data Colored by HMM State | {:.2} MHz | {} dBm'.format(sr, self.power_to_device - self.attens[i+skip]))
+                plt.grid(True)
+                plt.gca().set_aspect('equal')
                 plt.legend()
                 
-                # Avoid tight_layout - use subplots_adjust instead
+                # Use subplots_adjust safely
                 plt.subplots_adjust(right=0.85, top=0.9, bottom=0.1, left=0.1)
                 
                 iq_by_state_path = os.path.join(figpath, f'IQ_by_state_{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png')
@@ -1140,7 +1187,14 @@ class AlazarPowerSweepData:
             
             # Save remaining plots with separate try-except blocks for robustness
             
-            # Save results to HDF5
+            # Get transition rates
+            try:
+                rates = qp.getTransRatesFromProb(sr, M.transmat_)
+            except Exception as e:
+                print(f"Error calculating transition rates: {str(e)}")
+                rates = np.ones((n_comp, n_comp)) * 0.001  # Default rates if calculation fails
+            
+            # Save results to HDF5 (moved after calculating 'rates')
             try:
                 with h5py.File(savefile, 'a') as ff:
                     fp = ff.require_group(f'ATTEN{atten}')
@@ -1167,13 +1221,6 @@ class AlazarPowerSweepData:
                         fp.attrs.create(key, metainfo[key])
             except Exception as e:
                 print(f"Error saving results to HDF5: {str(e)}")
-            
-            # Get transition rates
-            try:
-                rates = qp.getTransRatesFromProb(sr, M.transmat_)
-            except Exception as e:
-                print(f"Error calculating transition rates: {str(e)}")
-                rates = np.ones((n_comp, n_comp)) * 0.001  # Default rates if calculation fails
             
             # Save HMM model parameters as .npz file
             try:
