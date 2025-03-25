@@ -407,7 +407,7 @@ class AlazarPowerSweepData:
             self.metainfo = self.set_metadata()
 
             self.index = int(np.where(self.attens == chosenAtten)[0])
-            print("\nThe power to the device is {} dBM at the chosen attenuation {}".format(self.power_to_device[self.index], self.attens[self.index]))
+            print("\nThe power to the device is {} dBM at the chosen attenuation {}".format(self.power_to_device - chosenAtten, chosenAtten))
 
             self.numModes = int(input("\nNumber of Modes you want to fit: "))
             set_qt_backend()
@@ -416,7 +416,7 @@ class AlazarPowerSweepData:
             covars = self.get_initial_QP_covars(data, means)
             print(f"Extracted Means:\n{means}\n\nEstimated Covariance:\n{covars}\n")
             print("\nStarting HMM Analysis.....\n\n")
-            self.runhmm(means, covars, intTime, SNRmin)
+            self.runHMM(means, covars, intTime, SNRmin)
         else:
             # self.power_to_device = self.set_attenuation_configuration()
             # Ask user to input the power to the device
@@ -425,7 +425,7 @@ class AlazarPowerSweepData:
             self.index = int(np.where(self.power_to_device == targetPower)[0])
 
             chosenAtten = self.attens[self.index]
-            print("\nThe chosen power to the device is {} dBM at the attenuation {}".format(self.power_to_device[self.index], chosenAtten))
+            print("\nThe chosen power to the device is {} dBM at the attenuation {}".format(self.power_to_device - chosenAtten, chosenAtten))
 
             self.numModes = numModes
             print(f"\nNumber of Modes to be fit: {self.numModes}")
@@ -489,9 +489,9 @@ class AlazarPowerSweepData:
         make_ellipses_for_initial_guess(means, covars, plt.gca(), colors)
         plt.xlabel('I [mV]')
         plt.ylabel('Q [mV]')
-        plt.title(f'Initial Guess for {n_comp} states | {self.power_to_device[i+skip]} dBm')
+        plt.title(f'Initial Guess for {n_comp} states | {self.power_to_device - self.attens[i+skip]} dBm')
         # Add timestamp to file name
-        plt.savefig(os.path.join(figpath, f'Initial_Guess_IQ_Histogram_{i+skip}_{self.power_to_device[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
+        plt.savefig(os.path.join(figpath, f'Initial_Guess_IQ_Histogram_{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
         plt.close()
         
         # Use optimized parallel HMM fitting if supported
@@ -644,8 +644,8 @@ class AlazarPowerSweepData:
         
         plt.xlabel('I [mV]')
         plt.ylabel('Q [mV]')
-        plt.title('HMM fit | {:.2} MHz | {} dBm'.format(sr, self.power_to_device[i+skip]))
-        plt.savefig(os.path.join(figpath, f'HMMfits_{i+skip}_{self.power_to_device[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
+        plt.title('HMM fit | {:.2} MHz | {} dBm'.format(sr, self.power_to_device - self.attens[i+skip]))
+        plt.savefig(os.path.join(figpath, f'HMMfits_{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
         plt.close()
         
         # 2. Plot I-Q histogram colored by state after HMM analysis
@@ -659,9 +659,9 @@ class AlazarPowerSweepData:
             
         plt.xlabel('I [mV]')
         plt.ylabel('Q [mV]')
-        plt.title('I-Q Data Colored by HMM State | {:.2} MHz | {} dBm'.format(sr, self.power_to_device[i+skip]))
+        plt.title('I-Q Data Colored by HMM State | {:.2} MHz | {} dBm'.format(sr, self.power_to_device - self.attens[i+skip]))
         plt.legend()
-        plt.savefig(os.path.join(figpath, f'IQ_by_state_{i+skip}_{self.power_to_device[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
+        plt.savefig(os.path.join(figpath, f'IQ_by_state_{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
         plt.close()
         
         # 3. Individual and cumulative state IQ plots
@@ -683,7 +683,7 @@ class AlazarPowerSweepData:
             ax.scatter(M.means_[state_idx, 0], M.means_[state_idx, 1], color='red', s=100, marker='x')
         
         plt.tight_layout()
-        plt.savefig(os.path.join(figpath, f'individual_state_IQ_{i+skip}_{self.power_to_device[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
+        plt.savefig(os.path.join(figpath, f'individual_state_IQ_{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
         plt.close()
         
         # Cumulative state plots
@@ -709,7 +709,7 @@ class AlazarPowerSweepData:
                 ax.scatter(M.means_[j, 0], M.means_[j, 1], color='red', s=100, marker='x')
         
         plt.tight_layout()
-        plt.savefig(os.path.join(figpath, f'cumulative_state_IQ_{i+skip}_{self.power_to_device[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
+        plt.savefig(os.path.join(figpath, f'cumulative_state_IQ_{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
         plt.close()
         
         # 4. 1D distributions of I and Q for each state
@@ -721,7 +721,7 @@ class AlazarPowerSweepData:
             if np.sum(mask) > 0:  # Only plot if there are points in this state
                 ax1.hist(data[0][mask], bins=50, alpha=0.7, color=colors[state_idx], label=f"State {state}")
         
-        ax1.set_title(f"I Distribution by State - {self.power_to_device[i+skip]} dBm")
+        ax1.set_title(f"I Distribution by State - {self.power_to_device - self.attens[i+skip]} dBm")
         ax1.set_xlabel("I [mV]")
         ax1.set_ylabel("Count")
         ax1.grid(True)
@@ -733,14 +733,14 @@ class AlazarPowerSweepData:
             if np.sum(mask) > 0:  # Only plot if there are points in this state
                 ax2.hist(data[1][mask], bins=50, alpha=0.7, color=colors[state_idx], label=f"State {state}")
         
-        ax2.set_title(f"Q Distribution by State - {self.power_to_device[i+skip]} dBm")
+        ax2.set_title(f"Q Distribution by State - {self.power_to_device - self.attens[i+skip]} dBm")
         ax2.set_xlabel("Q [mV]")
         ax2.set_ylabel("Count")
         ax2.grid(True)
         ax2.legend()
         
         plt.tight_layout()
-        plt.savefig(os.path.join(figpath, f'IQ_1D_distributions_{i+skip}_{self.power_to_device[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
+        plt.savefig(os.path.join(figpath, f'IQ_1D_distributions_{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
         plt.close()
         
         # Individual I and Q distributions for each state (separate subplots)
@@ -791,13 +791,13 @@ class AlazarPowerSweepData:
             ax.grid(True)
         
         plt.tight_layout()
-        plt.savefig(os.path.join(figpath, f'individual_IQ_distributions_{i+skip}_{self.power_to_device[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
+        plt.savefig(os.path.join(figpath, f'individual_IQ_distributions_{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
         plt.close()
 
         # Plot time series
         fig, ax = qp.plotTimeSeries(data, Q, np.arange(Q.size)/sr, 1500, 2000, zeroTime=True)
-        plt.title('{:.2} MHz | {} dBm'.format(sr, self.power_to_device[i+skip]))
-        plt.savefig(os.path.join(figpath, f'TimeSeries__{i+skip}_{self.power_to_device[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
+        plt.title('{:.2} MHz | {} dBm'.format(sr, self.power_to_device - self.attens[i+skip]))
+        plt.savefig(os.path.join(figpath, f'TimeSeries__{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
         plt.close()
 
         # Get transition rates
@@ -822,14 +822,14 @@ class AlazarPowerSweepData:
             fp.attrs.create('HMMstartprob_', M.startprob_)
             fp.attrs.create('HMMcovars_', M.covars_)
             fp.attrs.create('HMMtransmat_', M.transmat_)
-            fp.attrs.create('LOpower', self.power_to_device[i+skip])
+            fp.attrs.create('LOpower', self.power_to_device - self.attens[i+skip])
             fp.attrs.create('DAsetting', self.attens[i+skip])
 
             for key in metainfo:
                 fp.attrs.create(key, metainfo[key])
         
         # Save HMM model parameters as .npz file
-        npz_path = os.path.join(figpath, f'HMM_params_{i+skip}_{self.power_to_device[i+skip]}dBm_{n_comp}modes_{self.timestamp}.npz')
+        npz_path = os.path.join(figpath, f'HMM_params_{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.npz')
         np.savez(npz_path, 
                  means=M.means_, 
                  covars=M.covars_,
@@ -840,7 +840,7 @@ class AlazarPowerSweepData:
                  SNRs=SNRs,
                  occupation=state_occupations,
                  rates=rates,
-                 power=self.power_to_device[i+skip],
+                 power=self.power_to_device - self.attens[i+skip],
                  attenuation=atten,
                  sampleRate=sr,
                  num_modes=n_comp,
@@ -917,15 +917,26 @@ class AlazarPowerSweepData:
         
         # Save all HMM models to a single NPZ file with timestamp
         if len(HMM) > 0:
-            hmm_models_data = {
-                'num_models': len(HMM),
-                'numModes': self.numModes,
-                'phi': self.phi,
-                'temp': self.temp,
-                'attens': self.attens[self.index:self.index+len(HMM)],
-                'powers': self.power_to_device[self.index:self.index+len(HMM)],
-                'timestamp': self.timestamp
-            }
+            try:
+                hmm_models_data = {
+                    'num_models': len(HMM),
+                    'numModes': self.numModes,
+                    'phi': self.phi,
+                    'temp': self.temp,
+                    'attens': self.attens[self.index:self.index+len(HMM)],
+                    'powers': self.power_to_device[self.index:self.index+len(HMM)],
+                    'timestamp': self.timestamp
+                }
+            except:
+                hmm_models_data = {
+                    'num_models': len(HMM),
+                    'numModes': self.numModes,
+                    'phi': self.phi,
+                    'temp': self.temp,
+                    'attens': self.attens[self.index:self.index+len(HMM)],
+                    'power': self.power_to_device,
+                    'timestamp': self.timestamp
+                }
             
             # Add data for each model
             for i, model in enumerate(HMM):
