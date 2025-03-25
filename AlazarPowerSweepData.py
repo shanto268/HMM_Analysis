@@ -145,12 +145,12 @@ class AlazarPowerSweepData:
         which is faster and more reproducible than manual selection.
         
         The states are ordered so that:
-        - State 0 is the point closest to the origin (lowest I,Q)
-        - Subsequent states are ordered clockwise around the origin
+        - State 0 is the most populated state (highest frequency/most data points)
+        - Subsequent states are ordered clockwise around a circle
         
         Args:
             avgTime (float): Time in microseconds to average data for downsampling
-            sort_states (bool): Whether to sort states by proximity to origin and clockwise order
+            sort_states (bool): Whether to sort states by population and clockwise order
             
         Returns:
             tuple: (means, data) where means is array of state centers and data is the IQ data
@@ -191,142 +191,162 @@ class AlazarPowerSweepData:
             # Save original unsorted means for verification
             original_means = means.copy()
             
-            # Sort the means - first find the center of mass of all means
+            # Step 1: Find cluster populations by counting points in each cluster
+            labels = kmeans.labels_
+            cluster_populations = np.zeros(self.numModes, dtype=int)
+            for i in range(self.numModes):
+                cluster_populations[i] = np.sum(labels == i)
+            
+            # Step 2: Identify the most populated cluster - this will be State 0
+            most_populated_idx = np.argmax(cluster_populations)
+            print(f"Most populated cluster has {cluster_populations[most_populated_idx]} points and will be State 0")
+            
+            # Step 3: Calculate the center (centroid) of all points
             center = np.mean(means, axis=0)
             
-            # Find the point closest to the origin (0,0)
-            distances_to_origin = np.linalg.norm(means, axis=1)
-            closest_to_origin_idx = np.argmin(distances_to_origin)
-            
-            # Calculate angles for each mean relative to center, with the closest-to-origin point as reference
-            # Shift to make the closest-to-origin point be at angle 0
-            reference_point = means[closest_to_origin_idx]
-            
-            # Calculate angles of all points with respect to the center
-            # Using arctan2 to get angles in [-π, π]
+            # Step 4: Calculate angles for each point around the center
+            # We use arctan2 to get angles in [-π, π] range
             angles = np.arctan2(means[:, 1] - center[1], means[:, 0] - center[0])
             
-            # Adjust angles so that the reference point (closest to origin) has angle 0
-            reference_angle = np.arctan2(reference_point[1] - center[1], reference_point[0] - center[0])
-            angles = (angles - reference_angle) % (2 * np.pi)
+            # Step 5: Sort points by angle (clockwise order)
+            # We need to handle the special case of most populated cluster separately
+            remaining_indices = np.arange(len(means))
+            remaining_indices = np.delete(remaining_indices, most_populated_idx)
             
-            # Create sorting indices - first the closest to origin, then the rest by angle
-            sorted_indices = np.zeros(len(means), dtype=int)
-            sorted_indices[0] = closest_to_origin_idx
-            
-            # Get indices for the remaining points sorted by angle
-            remaining_indices = np.delete(np.arange(len(means)), closest_to_origin_idx)
+            # Sort remaining points by angle
             remaining_angles = angles[remaining_indices]
-            sorted_remaining = remaining_indices[np.argsort(remaining_angles)]
+            # For clockwise sorting, we sort in ascending order of angle
+            sorted_by_angle = remaining_indices[np.argsort(remaining_angles)]
             
-            # Combine - first the closest to origin, then the rest sorted clockwise
-            sorted_indices[1:] = sorted_remaining
+            # Step 6: Create final sorted indices with most populated cluster first, then clockwise order
+            sorted_indices = np.zeros(len(means), dtype=int)
+            sorted_indices[0] = most_populated_idx
+            sorted_indices[1:] = sorted_by_angle
             
             # Reorder the means
             means = means[sorted_indices]
             
-            print(f"Sorted means: State 0 is closest to origin, subsequent states are ordered clockwise")
+            print(f"Sorted means: State 0 is most populated, subsequent states are ordered clockwise")
             
             # Create a verification plot showing before and after sorting
-            plt.figure(figsize=[12, 6])
+            fig, axes = plt.subplots(1, 2, figsize=(12, 6))
             
             # Before sorting
-            plt.subplot(1, 2, 1)
-            h1 = qp.plotComplexHist(data[0], data[1], figsize=[6, 6])
-            plt.scatter(center[0], center[1], c='blue', s=150, marker='+', label='Center')
+            ax1 = axes[0]
+            h1 = qp.plotComplexHist(data[0], data[1], ax=ax1)
+            ax1.scatter(center[0], center[1], c='blue', s=150, marker='+', label='Center')
             for i, mean in enumerate(original_means):
-                plt.scatter(mean[0], mean[1], c=f'C{i}', s=150, marker='x')
-                plt.text(mean[0], mean[1], f'S{i}', fontsize=14, 
+                pop = cluster_populations[i]
+                ax1.scatter(mean[0], mean[1], c=f'C{i}', s=150, marker='x')
+                ax1.text(mean[0], mean[1], f'S{i}\n({pop})', fontsize=10, 
                         color=f'C{i}', ha='center', va='bottom', fontweight='bold')
-            plt.title('Before Sorting', fontsize=14)
-            plt.xlabel('I [mV]', fontsize=12)
-            plt.ylabel('Q [mV]', fontsize=12)
-            plt.grid(True, alpha=0.3)
+            ax1.set_title('Before Sorting', fontsize=14)
+            ax1.set_xlabel('I [mV]', fontsize=12)
+            ax1.set_ylabel('Q [mV]', fontsize=12)
+            ax1.grid(True, alpha=0.3)
             
-            # After sorting
-            plt.subplot(1, 2, 2)
-            h2 = qp.plotComplexHist(data[0], data[1], figsize=[6, 6])
-            plt.scatter(center[0], center[1], c='blue', s=150, marker='+', label='Center')
+            # After sorting - remap labels based on sorted indices
+            # Create a mapping from old indices to new indices
+            idx_map = {sorted_indices[i]: i for i in range(len(sorted_indices))}
+            remapped_labels = np.zeros_like(labels)
+            for i in range(len(labels)):
+                remapped_labels[i] = idx_map[labels[i]]
+                
+            # Recalculate populations after remapping
+            new_populations = np.zeros(self.numModes, dtype=int)
+            for i in range(self.numModes):
+                new_populations[i] = np.sum(remapped_labels == i)
+            
+            ax2 = axes[1]
+            h2 = qp.plotComplexHist(data[0], data[1], ax=ax2)
+            ax2.scatter(center[0], center[1], c='blue', s=150, marker='+', label='Center')
             for i, mean in enumerate(means):
-                plt.scatter(mean[0], mean[1], c=f'C{i}', s=150, marker='x')
-                plt.text(mean[0], mean[1], f'S{i}', fontsize=14, 
+                pop = new_populations[i]
+                ax2.scatter(mean[0], mean[1], c=f'C{i}', s=150, marker='x')
+                ax2.text(mean[0], mean[1], f'S{i}\n({pop})', fontsize=10, 
                         color=f'C{i}', ha='center', va='bottom', fontweight='bold')
                 # Draw a line from center to each point to show the clockwise ordering
-                plt.plot([center[0], mean[0]], [center[1], mean[1]], 'k--', alpha=0.5)
-            plt.title('After Sorting (Clockwise)', fontsize=14)
-            plt.xlabel('I [mV]', fontsize=12)
-            plt.ylabel('Q [mV]', fontsize=12)
-            plt.grid(True, alpha=0.3)
+                ax2.plot([center[0], mean[0]], [center[1], mean[1]], 'k--', alpha=0.5)
+            ax2.set_title('After Sorting (Clockwise)', fontsize=14)
+            ax2.set_xlabel('I [mV]', fontsize=12)
+            ax2.set_ylabel('Q [mV]', fontsize=12)
+            ax2.grid(True, alpha=0.3)
             
-            plt.tight_layout()
+            # Avoid tight_layout completely - use subplots_adjust instead
+            fig.subplots_adjust(right=0.85, wspace=0.3, left=0.1, top=0.9, bottom=0.1)
             
             # Ensure figure directory exists before saving
             if not os.path.exists(self.figure_path):
                 os.makedirs(self.figure_path)
                 print(f"Created directory: {self.figure_path}")
                 
-            # Save the verification plot
+            # Save the verification plot with bbox_inches='tight' to handle any remaining layout issues
             try:
                 verification_path = os.path.join(self.figure_path, 
                                            f'KMeans_Sorting_Verification_{self.numModes}modes_{self.timestamp}.png')
-                plt.savefig(verification_path)
-                plt.close()
+                fig.savefig(verification_path, bbox_inches='tight', dpi=150)
+                plt.close(fig)
                 print(f"Saved state sorting verification plot to: {verification_path}")
             except Exception as e:
                 print(f"Failed to save verification plot: {str(e)}")
+                plt.close(fig)  # Ensure figure is closed even on error
         else:
             print("Skipping state sorting as requested.")
         
-        # Plot the results to show the user
-        plt.figure(figsize=[8, 8])
-        h = qp.plotComplexHist(data[0], data[1], figsize=[8, 8])
+        # Plot the results to show the user - using newer subplot syntax
+        fig, ax = plt.subplots(figsize=(8, 8))
+        h = qp.plotComplexHist(data[0], data[1], ax=ax)
         
         # Find the center for plotting
         center = np.mean(means, axis=0)
         
         # Plot the center of mass
-        plt.scatter(center[0], center[1], c='blue', s=150, marker='+', label='Center')
+        ax.scatter(center[0], center[1], c='blue', s=150, marker='+', label='Center')
         
         # Plot cluster centers with arrows showing trajectory
         for i in range(len(means)):
-            plt.scatter(means[i, 0], means[i, 1], c=f'C{i}', s=150, marker='x')
-            plt.text(means[i, 0], means[i, 1], f'State {i}', fontsize=14, 
+            ax.scatter(means[i, 0], means[i, 1], c=f'C{i}', s=150, marker='x')
+            ax.text(means[i, 0], means[i, 1], f'State {i}', fontsize=14, 
                     color=f'C{i}', ha='center', va='bottom', fontweight='bold')
             
             # Draw a line from center to each point
-            plt.plot([center[0], means[i, 0]], [center[1], means[i, 1]], 'k--', alpha=0.5)
+            ax.plot([center[0], means[i, 0]], [center[1], means[i, 1]], 'k--', alpha=0.5)
             
             # Draw an arrow from current state to next state (if not the last state)
             if i < len(means) - 1:
-                plt.arrow(means[i, 0], means[i, 1], 
+                ax.arrow(means[i, 0], means[i, 1], 
                          (means[i+1, 0] - means[i, 0])*0.7, (means[i+1, 1] - means[i, 1])*0.7,
                          head_width=0.05, head_length=0.1, fc='green', ec='green', alpha=0.7)
         
         # Draw an arrow from the last state back to the first to complete the circle
         if len(means) > 2:
-            plt.arrow(means[-1, 0], means[-1, 1], 
+            ax.arrow(means[-1, 0], means[-1, 1], 
                      (means[0, 0] - means[-1, 0])*0.7, (means[0, 1] - means[-1, 1])*0.7,
                      head_width=0.05, head_length=0.1, fc='red', ec='red', alpha=0.7)
         
-        plt.title(f'Automatic K-means Clustering: {self.numModes} States\nState 0 closest to origin, clockwise ordering', fontsize=14)
-        plt.xlabel('I [mV]', fontsize=12)
-        plt.ylabel('Q [mV]', fontsize=12)
-        plt.grid(True, alpha=0.3)
-        plt.legend()
+        ax.set_title(f'Automatic K-means Clustering: {self.numModes} States\nState 0 is most populated, clockwise ordering', fontsize=14)
+        ax.set_xlabel('I [mV]', fontsize=12)
+        ax.set_ylabel('Q [mV]', fontsize=12)
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+        
+        # Avoid tight_layout completely - use subplots_adjust instead
+        fig.subplots_adjust(right=0.85, top=0.9, bottom=0.1, left=0.1)
             
         # Ensure figure directory exists before saving
         if not os.path.exists(self.figure_path):
             os.makedirs(self.figure_path)
             print(f"Created directory: {self.figure_path}")
             
-        # Save the figure for reference
+        # Save the figure for reference with bbox_inches='tight'
         try:
             fig_path = os.path.join(self.figure_path, f'KMeans_Initial_Means_{self.numModes}modes_{self.timestamp}.png')
-            plt.savefig(fig_path)
-            plt.close()
+            fig.savefig(fig_path, bbox_inches='tight', dpi=150)
+            plt.close(fig)
             print(f"Saved K-means clustering figure to: {fig_path}")
         except Exception as e:
             print(f"Failed to save K-means clustering figure: {str(e)}")
+            plt.close(fig)  # Ensure figure is closed even on error
         
         print(f"K-means clustering complete. Found {self.numModes} cluster centers.")
         return means, data
@@ -805,8 +825,8 @@ class AlazarPowerSweepData:
         processed_covars = self._handle_covariance(covars, n_comp)
         
         # 1. Plot initial guessed centers and covariance on IQ histogram (before HMM)
-        plt.figure(figsize=[6, 6])
-        h = qp.plotComplexHist(data[0], data[1], figsize=[6, 6])
+        fig, ax = plt.subplots(figsize=(6, 6))
+        h = qp.plotComplexHist(data[0], data[1], ax=ax)
         
         # Create a custom function to plot the initial guess ellipses
         def make_ellipses_for_initial_guess(means, covars, ax, colors):
@@ -831,13 +851,18 @@ class AlazarPowerSweepData:
         colormap = plt.cm.tab10
         colors = [colormap(j/n_comp) for j in range(n_comp)]
         
-        make_ellipses_for_initial_guess(means, covars, plt.gca(), colors)
-        plt.xlabel('I [mV]')
-        plt.ylabel('Q [mV]')
-        plt.title(f'Initial Guess for {n_comp} states | {self.power_to_device - self.attens[i+skip]} dBm')
+        make_ellipses_for_initial_guess(means, covars, ax, colors)
+        ax.set_xlabel('I [mV]')
+        ax.set_ylabel('Q [mV]')
+        ax.set_title(f'Initial Guess for {n_comp} states | {self.power_to_device - self.attens[i+skip]} dBm')
+        
+        # Avoid tight_layout - use subplots_adjust instead
+        fig.subplots_adjust(right=0.85, top=0.9, bottom=0.1, left=0.1)
+        
         # Add timestamp to file name
-        plt.savefig(os.path.join(figpath, f'Initial_Guess_IQ_Histogram_{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
-        plt.close()
+        fig.savefig(os.path.join(figpath, f'Initial_Guess_IQ_Histogram_{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'), 
+                    bbox_inches='tight', dpi=150)
+        plt.close(fig)
         
         # Use optimized parallel HMM fitting if supported
         if HMM_SUPPORTS_PARALLEL:
@@ -982,35 +1007,45 @@ class AlazarPowerSweepData:
             return None
 
         # Plot the fit (offline plotting with Agg backend)
-        plt.figure(figsize=[4, 4])
-        h = qp.plotComplexHist(data[0], data[1], figsize=[4, 4])
+        fig, ax = plt.subplots(figsize=(4, 4))
+        h = qp.plotComplexHist(data[0], data[1], ax=ax)
         
         # Use a colormap to generate colors for any number of states
         colormap = plt.cm.viridis  # viridis is a good colormap that's distinguishable even with many colors
         colors = [colormap(j/n_comp) for j in range(n_comp)]
         qp.make_ellipsesHMM(M, h, colors)
         
-        plt.xlabel('I [mV]')
-        plt.ylabel('Q [mV]')
-        plt.title('HMM fit | {:.2} MHz | {} dBm'.format(sr, self.power_to_device - self.attens[i+skip]))
-        plt.savefig(os.path.join(figpath, f'HMMfits_{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
-        plt.close()
+        ax.set_xlabel('I [mV]')
+        ax.set_ylabel('Q [mV]')
+        ax.set_title('HMM fit | {:.2} MHz | {} dBm'.format(sr, self.power_to_device - self.attens[i+skip]))
+        
+        # Avoid tight_layout - use subplots_adjust instead
+        fig.subplots_adjust(right=0.85, top=0.9, bottom=0.1, left=0.1)
+        
+        fig.savefig(os.path.join(figpath, f'HMMfits_{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'),
+                    bbox_inches='tight', dpi=150)
+        plt.close(fig)
         
         # 2. Plot I-Q histogram colored by state after HMM analysis
-        plt.figure(figsize=[6, 6])
+        fig, ax = plt.subplots(figsize=(6, 6))
         unique_states = np.unique(Q)
         colors = plt.cm.tab10(np.linspace(0, 1, len(unique_states)))
         
         for state_idx, state in enumerate(unique_states):
             mask = Q == state
-            plt.scatter(data[0][mask], data[1][mask], s=1, c=[colors[state_idx]], label=f'State {state}')
+            ax.scatter(data[0][mask], data[1][mask], s=1, c=[colors[state_idx]], label=f'State {state}')
             
-        plt.xlabel('I [mV]')
-        plt.ylabel('Q [mV]')
-        plt.title('I-Q Data Colored by HMM State | {:.2} MHz | {} dBm'.format(sr, self.power_to_device - self.attens[i+skip]))
-        plt.legend()
-        plt.savefig(os.path.join(figpath, f'IQ_by_state_{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
-        plt.close()
+        ax.set_xlabel('I [mV]')
+        ax.set_ylabel('Q [mV]')
+        ax.set_title('I-Q Data Colored by HMM State | {:.2} MHz | {} dBm'.format(sr, self.power_to_device - self.attens[i+skip]))
+        ax.legend()
+        
+        # Avoid tight_layout - use subplots_adjust instead
+        fig.subplots_adjust(right=0.85, top=0.9, bottom=0.1, left=0.1)
+        
+        fig.savefig(os.path.join(figpath, f'IQ_by_state_{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'),
+                   bbox_inches='tight', dpi=150)
+        plt.close(fig)
         
         # 3. Individual and cumulative state IQ plots
         n_states = len(unique_states)
@@ -1030,9 +1065,12 @@ class AlazarPowerSweepData:
             # Add the fitted mean for this state
             ax.scatter(M.means_[state_idx, 0], M.means_[state_idx, 1], color='red', s=100, marker='x')
         
-        plt.tight_layout()
-        plt.savefig(os.path.join(figpath, f'individual_state_IQ_{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
-        plt.close()
+        # Avoid tight_layout - use subplots_adjust instead 
+        fig.subplots_adjust(wspace=0.3, hspace=0.3, right=0.95, top=0.9, bottom=0.1, left=0.05)
+        
+        fig.savefig(os.path.join(figpath, f'individual_state_IQ_{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'),
+                   bbox_inches='tight', dpi=150)
+        plt.close(fig)
         
         # Cumulative state plots
         fig, axes = plt.subplots(1, n_states, figsize=(5*n_states, 5), squeeze=False)
@@ -1056,9 +1094,12 @@ class AlazarPowerSweepData:
             for j in range(i_state+1):
                 ax.scatter(M.means_[j, 0], M.means_[j, 1], color='red', s=100, marker='x')
         
-        plt.tight_layout()
-        plt.savefig(os.path.join(figpath, f'cumulative_state_IQ_{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
-        plt.close()
+        # Avoid tight_layout - use subplots_adjust instead
+        fig.subplots_adjust(wspace=0.3, hspace=0.3, right=0.95, top=0.9, bottom=0.1, left=0.05)
+        
+        fig.savefig(os.path.join(figpath, f'cumulative_state_IQ_{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'),
+                   bbox_inches='tight', dpi=150)
+        plt.close(fig)
         
         # 4. 1D distributions of I and Q for each state
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
@@ -1087,9 +1128,12 @@ class AlazarPowerSweepData:
         ax2.grid(True)
         ax2.legend()
         
-        plt.tight_layout()
-        plt.savefig(os.path.join(figpath, f'IQ_1D_distributions_{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
-        plt.close()
+        # Avoid tight_layout - use subplots_adjust instead
+        fig.subplots_adjust(hspace=0.3, right=0.95, top=0.95, bottom=0.05, left=0.1)
+        
+        fig.savefig(os.path.join(figpath, f'IQ_1D_distributions_{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'),
+                   bbox_inches='tight', dpi=150)
+        plt.close(fig)
         
         # Individual I and Q distributions for each state (separate subplots)
         fig, axes = plt.subplots(2, n_states, figsize=(5*n_states, 10), squeeze=False)
@@ -1138,15 +1182,23 @@ class AlazarPowerSweepData:
             ax.set_ylabel("Count")
             ax.grid(True)
         
-        plt.tight_layout()
-        plt.savefig(os.path.join(figpath, f'individual_IQ_distributions_{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
-        plt.close()
+        # Avoid tight_layout - use subplots_adjust instead
+        fig.subplots_adjust(wspace=0.3, hspace=0.3, right=0.95, top=0.95, bottom=0.05, left=0.1)
+        
+        fig.savefig(os.path.join(figpath, f'individual_IQ_distributions_{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'),
+                   bbox_inches='tight', dpi=150)
+        plt.close(fig)
 
-        # Plot time series
+        # Plot time series - qp.plotTimeSeries returns fig, ax
         fig, ax = qp.plotTimeSeries(data, Q, np.arange(Q.size)/sr, 1500, 2000, zeroTime=True)
-        plt.title('{:.2} MHz | {} dBm'.format(sr, self.power_to_device - self.attens[i+skip]))
-        plt.savefig(os.path.join(figpath, f'TimeSeries__{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
-        plt.close()
+        ax.set_title('{:.2} MHz | {} dBm'.format(sr, self.power_to_device - self.attens[i+skip]))
+        
+        # Avoid tight_layout - use subplots_adjust instead
+        fig.subplots_adjust(right=0.95, top=0.9, bottom=0.1, left=0.1)
+        
+        fig.savefig(os.path.join(figpath, f'TimeSeries__{i+skip}_{self.power_to_device - self.attens[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'),
+                   bbox_inches='tight', dpi=150)
+        plt.close(fig)
 
         # Get transition rates
         rates = qp.getTransRatesFromProb(sr, M.transmat_)
