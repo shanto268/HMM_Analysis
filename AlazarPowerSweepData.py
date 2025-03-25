@@ -137,15 +137,20 @@ class AlazarPowerSweepData:
         plt.close()
         return means, data
 
-    def get_automatic_QP_means(self, avgTime=3):
+    def get_automatic_QP_means(self, avgTime=3, sort_states=True):
         """
         Automatically estimate initial HMM state means using K-means clustering.
         
         This method replaces manual selection of means with automated clustering,
         which is faster and more reproducible than manual selection.
         
+        The states are ordered so that:
+        - State 0 is the point closest to the origin (lowest I,Q)
+        - Subsequent states are ordered clockwise around the origin
+        
         Args:
             avgTime (float): Time in microseconds to average data for downsampling
+            sort_states (bool): Whether to sort states by proximity to origin and clockwise order
             
         Returns:
             tuple: (means, data) where means is array of state centers and data is the IQ data
@@ -173,7 +178,7 @@ class AlazarPowerSweepData:
             n_init=10,         # Run multiple initializations and pick best
             max_iter=300,      # Maximum iterations for each initialization
             tol=1e-4,          # Convergence tolerance
-            random_state=2    # For reproducibility
+            random_state=42    # For reproducibility
         )
         
         # Fit K-means model
@@ -182,19 +187,137 @@ class AlazarPowerSweepData:
         # Get cluster centers as initial means
         means = kmeans.cluster_centers_
         
+        if sort_states:
+            # Save original unsorted means for verification
+            original_means = means.copy()
+            
+            # Sort the means - first find the center of mass of all means
+            center = np.mean(means, axis=0)
+            
+            # Find the point closest to the origin (0,0)
+            distances_to_origin = np.linalg.norm(means, axis=1)
+            closest_to_origin_idx = np.argmin(distances_to_origin)
+            
+            # Calculate angles for each mean relative to center, with the closest-to-origin point as reference
+            # Shift to make the closest-to-origin point be at angle 0
+            reference_point = means[closest_to_origin_idx]
+            
+            # Calculate angles of all points with respect to the center
+            # Using arctan2 to get angles in [-π, π]
+            angles = np.arctan2(means[:, 1] - center[1], means[:, 0] - center[0])
+            
+            # Adjust angles so that the reference point (closest to origin) has angle 0
+            reference_angle = np.arctan2(reference_point[1] - center[1], reference_point[0] - center[0])
+            angles = (angles - reference_angle) % (2 * np.pi)
+            
+            # Create sorting indices - first the closest to origin, then the rest by angle
+            sorted_indices = np.zeros(len(means), dtype=int)
+            sorted_indices[0] = closest_to_origin_idx
+            
+            # Get indices for the remaining points sorted by angle
+            remaining_indices = np.delete(np.arange(len(means)), closest_to_origin_idx)
+            remaining_angles = angles[remaining_indices]
+            sorted_remaining = remaining_indices[np.argsort(remaining_angles)]
+            
+            # Combine - first the closest to origin, then the rest sorted clockwise
+            sorted_indices[1:] = sorted_remaining
+            
+            # Reorder the means
+            means = means[sorted_indices]
+            
+            print(f"Sorted means: State 0 is closest to origin, subsequent states are ordered clockwise")
+            
+            # Create a verification plot showing before and after sorting
+            plt.figure(figsize=[12, 6])
+            
+            # Before sorting
+            plt.subplot(1, 2, 1)
+            h1 = qp.plotComplexHist(data[0], data[1], figsize=[6, 6])
+            plt.scatter(center[0], center[1], c='blue', s=150, marker='+', label='Center')
+            for i, mean in enumerate(original_means):
+                plt.scatter(mean[0], mean[1], c=f'C{i}', s=150, marker='x')
+                plt.text(mean[0], mean[1], f'S{i}', fontsize=14, 
+                        color=f'C{i}', ha='center', va='bottom', fontweight='bold')
+            plt.title('Before Sorting', fontsize=14)
+            plt.xlabel('I [mV]', fontsize=12)
+            plt.ylabel('Q [mV]', fontsize=12)
+            plt.grid(True, alpha=0.3)
+            
+            # After sorting
+            plt.subplot(1, 2, 2)
+            h2 = qp.plotComplexHist(data[0], data[1], figsize=[6, 6])
+            plt.scatter(center[0], center[1], c='blue', s=150, marker='+', label='Center')
+            for i, mean in enumerate(means):
+                plt.scatter(mean[0], mean[1], c=f'C{i}', s=150, marker='x')
+                plt.text(mean[0], mean[1], f'S{i}', fontsize=14, 
+                        color=f'C{i}', ha='center', va='bottom', fontweight='bold')
+                # Draw a line from center to each point to show the clockwise ordering
+                plt.plot([center[0], mean[0]], [center[1], mean[1]], 'k--', alpha=0.5)
+            plt.title('After Sorting (Clockwise)', fontsize=14)
+            plt.xlabel('I [mV]', fontsize=12)
+            plt.ylabel('Q [mV]', fontsize=12)
+            plt.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            
+            # Ensure figure directory exists before saving
+            if not os.path.exists(self.figure_path):
+                os.makedirs(self.figure_path)
+                print(f"Created directory: {self.figure_path}")
+                
+            # Save the verification plot
+            try:
+                verification_path = os.path.join(self.figure_path, 
+                                           f'KMeans_Sorting_Verification_{self.numModes}modes_{self.timestamp}.png')
+                plt.savefig(verification_path)
+                plt.close()
+                print(f"Saved state sorting verification plot to: {verification_path}")
+            except Exception as e:
+                print(f"Failed to save verification plot: {str(e)}")
+        else:
+            print("Skipping state sorting as requested.")
+        
         # Plot the results to show the user
-        plt.figure(figsize=[6, 6])
-        h = qp.plotComplexHist(data[0], data[1], figsize=[6, 6])
+        plt.figure(figsize=[8, 8])
+        h = qp.plotComplexHist(data[0], data[1], figsize=[8, 8])
         
-        # Plot cluster centers
-        plt.scatter(means[:, 0], means[:, 1], c='red', s=100, marker='x')
-        for i, mean in enumerate(means):
-            plt.text(mean[0], mean[1], f'State {i}', fontsize=12, 
-                    color='red', ha='center', va='bottom')
+        # Find the center for plotting
+        center = np.mean(means, axis=0)
         
-        plt.title(f'Automatic K-means Clustering: {self.numModes} States')
-        plt.xlabel('I [mV]')
-        plt.ylabel('Q [mV]')
+        # Plot the center of mass
+        plt.scatter(center[0], center[1], c='blue', s=150, marker='+', label='Center')
+        
+        # Plot cluster centers with arrows showing trajectory
+        for i in range(len(means)):
+            plt.scatter(means[i, 0], means[i, 1], c=f'C{i}', s=150, marker='x')
+            plt.text(means[i, 0], means[i, 1], f'State {i}', fontsize=14, 
+                    color=f'C{i}', ha='center', va='bottom', fontweight='bold')
+            
+            # Draw a line from center to each point
+            plt.plot([center[0], means[i, 0]], [center[1], means[i, 1]], 'k--', alpha=0.5)
+            
+            # Draw an arrow from current state to next state (if not the last state)
+            if i < len(means) - 1:
+                plt.arrow(means[i, 0], means[i, 1], 
+                         (means[i+1, 0] - means[i, 0])*0.7, (means[i+1, 1] - means[i, 1])*0.7,
+                         head_width=0.05, head_length=0.1, fc='green', ec='green', alpha=0.7)
+        
+        # Draw an arrow from the last state back to the first to complete the circle
+        if len(means) > 2:
+            plt.arrow(means[-1, 0], means[-1, 1], 
+                     (means[0, 0] - means[-1, 0])*0.7, (means[0, 1] - means[-1, 1])*0.7,
+                     head_width=0.05, head_length=0.1, fc='red', ec='red', alpha=0.7)
+        
+        plt.title(f'Automatic K-means Clustering: {self.numModes} States\nState 0 closest to origin, clockwise ordering', fontsize=14)
+        plt.xlabel('I [mV]', fontsize=12)
+        plt.ylabel('Q [mV]', fontsize=12)
+        plt.grid(True, alpha=0.3)
+        plt.legend()
+            
+        # Ensure figure directory exists before saving
+        if not os.path.exists(self.figure_path):
+            os.makedirs(self.figure_path)
+            print(f"Created directory: {self.figure_path}")
             
         # Save the figure for reference
         try:
@@ -202,8 +325,9 @@ class AlazarPowerSweepData:
             plt.savefig(fig_path)
             plt.close()
             print(f"Saved K-means clustering figure to: {fig_path}")
-        except:
-            print("Failed to save K-means clustering figure.")
+        except Exception as e:
+            print(f"Failed to save K-means clustering figure: {str(e)}")
+        
         print(f"K-means clustering complete. Found {self.numModes} cluster centers.")
         return means, data
 
@@ -478,7 +602,7 @@ class AlazarPowerSweepData:
 
     def start_HMM_fit(self, intTime=1, SNRmin=3, targetPower=None, numModes=2, n_jobs=None, 
                      covariance_type=None, n_iter=None, tol=None, verbose=None, transition_model=None,
-                     fast_mode=False, auto_means=False):
+                     fast_mode=False, auto_means=False, sort_states=True):
         """
         Start the HMM fitting process with optimized performance options.
         
@@ -495,6 +619,7 @@ class AlazarPowerSweepData:
             transition_model (str): Model for transition matrix ('simple' or 'physics')
             fast_mode (bool): Whether to use optimized parameters for faster fitting
             auto_means (bool): Whether to use automatic mean estimation with K-means
+            sort_states (bool): Whether to sort states by proximity to origin and clockwise order
         """
         try:
             print("\n\n"+"="*10+"\tHMM ANALYSIS STARTED\t"+"="*10)
@@ -560,7 +685,7 @@ class AlazarPowerSweepData:
 
                     # Choose automatic or manual means selection
                     if auto_means:
-                        means, data = self.get_automatic_QP_means()
+                        means, data = self.get_automatic_QP_means(sort_states=sort_states)
                     else:
                         means, data = self.get_initial_QP_means()
                         
@@ -608,7 +733,7 @@ class AlazarPowerSweepData:
 
                     # Always use automatic means in non-interactive mode when fast_mode is enabled
                     if auto_means or fast_mode:
-                        means, data = self.get_automatic_QP_means()
+                        means, data = self.get_automatic_QP_means(sort_states=sort_states)
                     else:
                         means, data = self.get_initial_QP_means()
                         
