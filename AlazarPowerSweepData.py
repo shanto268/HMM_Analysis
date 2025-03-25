@@ -27,12 +27,14 @@ import warnings
 import fitTools.quasiparticleFunctions as qp
 import h5py
 import matplotlib
+import matplotlib.colors
 import matplotlib.pyplot as plt
 import numpy as np
 import psutil
 from hmmlearn import hmm
 from joblib import Parallel, delayed
 from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.patches import Ellipse
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from tqdm import tqdm, trange
 
@@ -144,44 +146,46 @@ class AlazarPowerSweepData:
         This method replaces manual selection of means with automated clustering,
         which is faster and more reproducible than manual selection.
         
-        The states are ordered so that:
-        - State 0 is the most populated state (highest frequency/most data points)
-        - Subsequent states are ordered clockwise around a circle
+        The states are ordered clockwise in the I-Q plane, with:
+        - State 0 typically having lower I values
+        - Subsequent states increasing in order from left to right on the I axis
         
         Args:
             avgTime (float): Time in microseconds to average data for downsampling
-            sort_states (bool): Whether to sort states by population and clockwise order
+            sort_states (bool): Whether to sort states by I-coordinate and clockwise order
             
         Returns:
             tuple: (means, data) where means is array of state centers and data is the IQ data
         """
-        print("Automatically determining initial means using K-means clustering...")
         try:
-            from sklearn.cluster import KMeans
-        except ImportError:
-            print("Warning: sklearn not installed. Falling back to manual means selection.")
-            return self.get_QP_means_from_IQ(avgTime)
+            print("Automatically determining initial means using K-means clustering...")
             
-        # Make sure we have a figure path
-        try:
-            if not os.path.exists(self.figure_path):
-                os.makedirs(self.figure_path)
-                print(f"Created figure directory: {self.figure_path}")
-        except Exception as e:
-            print(f"Warning: Could not create figure directory: {str(e)}")
-        
-        # Load and process the data
-        try:
-            data = qp.loadAlazarData(self.files[self.index])
-            data, sr = qp.BoxcarDownsample(data, avgTime, sampleRate=self.sampleRateFromData, returnRate=True)
-            data = qp.uint16_to_mV(data)
-        except Exception as e:
-            print(f"Error loading or processing data: {str(e)}")
-            print("Falling back to manual means selection.")
-            return self.get_QP_means_from_IQ(avgTime)
-        
-        # Prepare data for K-means (reshape to [n_samples, n_features])
-        try:
+            # Check if sklearn is available for K-means clustering
+            try:
+                from sklearn.cluster import KMeans
+            except ImportError:
+                print("Warning: sklearn not installed. Falling back to manual means selection.")
+                return self.get_QP_means_from_IQ(avgTime)
+                
+            # Make sure we have a figure path
+            try:
+                if not os.path.exists(self.figure_path):
+                    os.makedirs(self.figure_path)
+                    print(f"Created figure directory: {self.figure_path}")
+            except Exception as e:
+                print(f"Warning: Could not create figure directory: {str(e)}")
+            
+            # Load and process the data
+            try:
+                data = qp.loadAlazarData(self.files[self.index])
+                data, sr = qp.BoxcarDownsample(data, avgTime, sampleRate=self.sampleRateFromData, returnRate=True)
+                data = qp.uint16_to_mV(data)
+            except Exception as e:
+                print(f"Error loading or processing data: {str(e)}")
+                print("Falling back to manual means selection.")
+                return self.get_QP_means_from_IQ(avgTime)
+            
+            # Prepare data for K-means (reshape to [n_samples, n_features])
             iq_data = np.vstack([data[0], data[1]]).T
             
             # Run K-means clustering
@@ -199,193 +203,191 @@ class AlazarPowerSweepData:
             
             # Get cluster centers as initial means
             means = kmeans.cluster_centers_
-        except Exception as e:
-            print(f"Error in K-means clustering: {str(e)}")
-            print("Falling back to manual means selection.")
-            return self.get_QP_means_from_IQ(avgTime)
-        
-        if sort_states:
+            
+            # Count points in each cluster for reference
+            labels = kmeans.labels_
+            cluster_populations = np.zeros(self.numModes, dtype=int)
+            for i in range(self.numModes):
+                cluster_populations[i] = np.sum(labels == i)
+            
+            # Save original unsorted means for verification
+            original_means = means.copy()
+            original_labels = labels.copy()
+            
+            if sort_states:
+                try:
+                    # Sort states based on I-coordinate (left to right)
+                    # This ensures that states are ordered clockwise around the I-Q plane
+                    i_sorted_indices = np.argsort(means[:, 0])
+                    means = means[i_sorted_indices]
+                    
+                    # Create a mapping from old cluster indices to new sorted indices
+                    idx_map = {i_sorted_indices[i]: i for i in range(len(i_sorted_indices))}
+                    
+                    # Remap the cluster labels based on the new ordering
+                    remapped_labels = np.zeros_like(labels)
+                    for i in range(len(labels)):
+                        remapped_labels[i] = idx_map[labels[i]]
+                    
+                    # Recalculate populations after remapping
+                    new_populations = np.zeros(self.numModes, dtype=int)
+                    for i in range(self.numModes):
+                        new_populations[i] = np.sum(remapped_labels == i)
+                        
+                    print(f"Sorted means by I-coordinate (left to right, clockwise in I-Q plane)")
+                    
+                    # Create a verification plot showing before and after sorting
+                    plt.close('all')  # Close any existing plots to avoid confusion
+                    
+                    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+                    
+                    # Before sorting plot
+                    ax1 = axes[0]
+                    
+                    # Calculate the center for reference
+                    center = np.mean(original_means, axis=0)
+                    
+                    # Create 2D histogram
+                    h1 = ax1.hist2d(data[0], data[1], bins=80, norm=matplotlib.colors.LogNorm(), 
+                                   cmap=plt.cm.Greys)
+                    plt.colorbar(h1[3], ax=ax1, shrink=0.9, extend='both')
+                    
+                    # Plot center and means
+                    ax1.scatter(center[0], center[1], c='blue', s=150, marker='+', label='Center')
+                    for i, mean in enumerate(original_means):
+                        pop = cluster_populations[i]
+                        ax1.scatter(mean[0], mean[1], c=f'C{i}', s=150, marker='x')
+                        ax1.text(mean[0], mean[1], f'S{i}\n({pop})', fontsize=10, 
+                                color=f'C{i}', ha='center', va='bottom', fontweight='bold')
+                    
+                    ax1.set_title('Before Sorting', fontsize=14)
+                    ax1.set_xlabel('I [mV]', fontsize=12)
+                    ax1.set_ylabel('Q [mV]', fontsize=12)
+                    ax1.grid(True, alpha=0.3)
+                    ax1.set_aspect('equal')
+                    
+                    # After sorting plot
+                    ax2 = axes[1]
+                    
+                    # Create 2D histogram
+                    h2 = ax2.hist2d(data[0], data[1], bins=80, norm=matplotlib.colors.LogNorm(), 
+                                   cmap=plt.cm.Greys)
+                    plt.colorbar(h2[3], ax=ax2, shrink=0.9, extend='both')
+                    
+                    # Plot center and sorted means
+                    ax2.scatter(center[0], center[1], c='blue', s=150, marker='+', label='Center')
+                    for i, mean in enumerate(means):
+                        pop = new_populations[i]
+                        ax2.scatter(mean[0], mean[1], c=f'C{i}', s=150, marker='x')
+                        ax2.text(mean[0], mean[1], f'S{i}\n({pop})', fontsize=10, 
+                                color=f'C{i}', ha='center', va='bottom', fontweight='bold')
+                        
+                        # Draw a line from center to each point to show the clockwise ordering
+                        ax2.plot([center[0], mean[0]], [center[1], mean[1]], 'k--', alpha=0.5)
+                        
+                        # Draw arrows connecting points in order
+                        if i < len(means) - 1:
+                            dx = means[i+1, 0] - mean[0]
+                            dy = means[i+1, 1] - mean[1]
+                            ax2.arrow(mean[0], mean[1], dx*0.7, dy*0.7, 
+                                     head_width=0.05, head_length=0.1, fc='green', ec='green', alpha=0.7)
+                    
+                    ax2.set_title('After Sorting (Clockwise by I-coordinate)', fontsize=14)
+                    ax2.set_xlabel('I [mV]', fontsize=12)
+                    ax2.set_ylabel('Q [mV]', fontsize=12)
+                    ax2.grid(True, alpha=0.3)
+                    ax2.set_aspect('equal')
+                    
+                    # Adjust subplot spacing
+                    plt.subplots_adjust(wspace=0.3)
+                    
+                    # Save verification plot
+                    try:
+                        verification_path = os.path.join(self.figure_path, 
+                                                  f'KMeans_Sorting_Verification_{self.numModes}modes_{self.timestamp}.png')
+                        fig.savefig(verification_path, bbox_inches='tight', dpi=150)
+                        print(f"Saved state sorting verification plot to: {verification_path}")
+                    except Exception as e:
+                        print(f"Failed to save verification plot: {str(e)}")
+                    finally:
+                        plt.close(fig)  # Ensure figure is closed
+                        
+                except Exception as e:
+                    print(f"Error in state sorting: {str(e)}")
+                    print("Using unsorted K-means states.")
+                    plt.close('all')
+            else:
+                print("Skipping state sorting as requested.")
+            
+            # Create a final visualization of the sorted states
             try:
-                # Save original unsorted means for verification
-                original_means = means.copy()
+                plt.close('all')  # Close any existing plots
                 
-                # Step 1: Find cluster populations by counting points in each cluster
-                labels = kmeans.labels_
-                cluster_populations = np.zeros(self.numModes, dtype=int)
-                for i in range(self.numModes):
-                    cluster_populations[i] = np.sum(labels == i)
+                fig, ax = plt.subplots(figsize=(8, 8))
                 
-                # Step 2: Identify the most populated cluster - this will be State 0
-                most_populated_idx = np.argmax(cluster_populations)
-                print(f"Most populated cluster has {cluster_populations[most_populated_idx]} points and will be State 0")
+                # Create 2D histogram
+                h = ax.hist2d(data[0], data[1], bins=80, norm=matplotlib.colors.LogNorm(), 
+                             cmap=plt.cm.Greys)
+                plt.colorbar(h[3], ax=ax, shrink=0.9, extend='both')
                 
-                # Step 3: Calculate the center (centroid) of all points
+                # Find the center for plotting
                 center = np.mean(means, axis=0)
                 
-                # Step 4: Calculate angles for each point around the center
-                # We use arctan2 to get angles in [-π, π] range
-                angles = np.arctan2(means[:, 1] - center[1], means[:, 0] - center[0])
+                # Plot the center and means
+                ax.scatter(center[0], center[1], c='blue', s=150, marker='+', label='Center')
                 
-                # Step 5: Sort points by angle (clockwise order)
-                # We need to handle the special case of most populated cluster separately
-                remaining_indices = np.arange(len(means))
-                remaining_indices = np.delete(remaining_indices, most_populated_idx)
-                
-                # Sort remaining points by angle
-                remaining_angles = angles[remaining_indices]
-                # For clockwise sorting, we sort in ascending order of angle
-                sorted_by_angle = remaining_indices[np.argsort(remaining_angles)]
-                
-                # Step 6: Create final sorted indices with most populated cluster first, then clockwise order
-                sorted_indices = np.zeros(len(means), dtype=int)
-                sorted_indices[0] = most_populated_idx
-                sorted_indices[1:] = sorted_by_angle
-                
-                # Reorder the means
-                means = means[sorted_indices]
-                
-                print(f"Sorted means: State 0 is most populated, subsequent states are ordered clockwise")
-                
-                # Create a verification plot showing before and after sorting
-                fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-                
-                # Before sorting
-                ax1 = axes[0]
-                
-                # Using plotComplexHist without ax parameter and manually setting it up
-                plt.sca(ax1)
-                h1 = qp.plotComplexHist(data[0], data[1], figsize=[6, 6])
-                
-                ax1.scatter(center[0], center[1], c='blue', s=150, marker='+', label='Center')
-                for i, mean in enumerate(original_means):
-                    pop = cluster_populations[i]
-                    ax1.scatter(mean[0], mean[1], c=f'C{i}', s=150, marker='x')
-                    ax1.text(mean[0], mean[1], f'S{i}\n({pop})', fontsize=10, 
-                            color=f'C{i}', ha='center', va='bottom', fontweight='bold')
-                ax1.set_title('Before Sorting', fontsize=14)
-                ax1.set_xlabel('I [mV]', fontsize=12)
-                ax1.set_ylabel('Q [mV]', fontsize=12)
-                ax1.grid(True, alpha=0.3)
-                
-                # After sorting - remap labels based on sorted indices
-                # Create a mapping from old indices to new indices
-                idx_map = {sorted_indices[i]: i for i in range(len(sorted_indices))}
-                remapped_labels = np.zeros_like(labels)
-                for i in range(len(labels)):
-                    remapped_labels[i] = idx_map[labels[i]]
+                # Plot cluster centers with arrows showing trajectory
+                for i in range(len(means)):
+                    ax.scatter(means[i, 0], means[i, 1], c=f'C{i}', s=150, marker='x')
+                    ax.text(means[i, 0], means[i, 1], f'State {i}', fontsize=14, 
+                           color=f'C{i}', ha='center', va='bottom', fontweight='bold')
                     
-                # Recalculate populations after remapping
-                new_populations = np.zeros(self.numModes, dtype=int)
-                for i in range(self.numModes):
-                    new_populations[i] = np.sum(remapped_labels == i)
-                
-                ax2 = axes[1]
-                
-                # Using plotComplexHist without ax parameter and manually setting it up
-                plt.sca(ax2)
-                h2 = qp.plotComplexHist(data[0], data[1], figsize=[6, 6])
-                
-                ax2.scatter(center[0], center[1], c='blue', s=150, marker='+', label='Center')
-                for i, mean in enumerate(means):
-                    pop = new_populations[i]
-                    ax2.scatter(mean[0], mean[1], c=f'C{i}', s=150, marker='x')
-                    ax2.text(mean[0], mean[1], f'S{i}\n({pop})', fontsize=10, 
-                            color=f'C{i}', ha='center', va='bottom', fontweight='bold')
-                    # Draw a line from center to each point to show the clockwise ordering
-                    ax2.plot([center[0], mean[0]], [center[1], mean[1]], 'k--', alpha=0.5)
-                ax2.set_title('After Sorting (Clockwise)', fontsize=14)
-                ax2.set_xlabel('I [mV]', fontsize=12)
-                ax2.set_ylabel('Q [mV]', fontsize=12)
-                ax2.grid(True, alpha=0.3)
-                
-                # Avoid tight_layout completely - use subplots_adjust instead
-                fig.subplots_adjust(right=0.85, wspace=0.3, left=0.1, top=0.9, bottom=0.1)
-                
-                # Ensure figure directory exists before saving
-                if not os.path.exists(self.figure_path):
-                    os.makedirs(self.figure_path)
-                    print(f"Created directory: {self.figure_path}")
+                    # Draw a line from center to each point
+                    ax.plot([center[0], means[i, 0]], [center[1], means[i, 1]], 'k--', alpha=0.5)
                     
-                # Save the verification plot with bbox_inches='tight' to handle any remaining layout issues
+                    # Draw an arrow from current state to next state (if not the last state)
+                    if i < len(means) - 1:
+                        ax.arrow(means[i, 0], means[i, 1], 
+                                (means[i+1, 0] - means[i, 0])*0.7, (means[i+1, 1] - means[i, 1])*0.7,
+                                head_width=0.05, head_length=0.1, fc='green', ec='green', alpha=0.7)
+                
+                # Draw an arrow from the last state back to the first to complete the circle
+                if len(means) > 2:
+                    ax.arrow(means[-1, 0], means[-1, 1], 
+                           (means[0, 0] - means[-1, 0])*0.7, (means[0, 1] - means[-1, 1])*0.7,
+                           head_width=0.05, head_length=0.1, fc='red', ec='red', alpha=0.7)
+                
+                ax.set_title(f'K-means Clustering: {self.numModes} States\nStates sorted left-to-right (clockwise in I-Q)', fontsize=14)
+                ax.set_xlabel('I [mV]', fontsize=12)
+                ax.set_ylabel('Q [mV]', fontsize=12)
+                ax.grid(True, alpha=0.3)
+                ax.set_aspect('equal')
+                ax.legend()
+                
+                # Save the figure
                 try:
-                    verification_path = os.path.join(self.figure_path, 
-                                               f'KMeans_Sorting_Verification_{self.numModes}modes_{self.timestamp}.png')
-                    fig.savefig(verification_path, bbox_inches='tight', dpi=150)
-                    print(f"Saved state sorting verification plot to: {verification_path}")
+                    fig_path = os.path.join(self.figure_path, f'KMeans_Initial_Means_{self.numModes}modes_{self.timestamp}.png')
+                    fig.savefig(fig_path, bbox_inches='tight', dpi=150)
+                    print(f"Saved K-means clustering figure to: {fig_path}")
                 except Exception as e:
-                    print(f"Failed to save verification plot: {str(e)}")
+                    print(f"Failed to save K-means clustering figure: {str(e)}")
                 finally:
-                    plt.close(fig)  # Ensure figure is closed even on error
+                    plt.close(fig)  # Ensure figure is closed
+                    
             except Exception as e:
-                print(f"Error in state sorting: {str(e)}")
-                print("Using unsorted states instead.")
-                plt.close('all')  # Close any open figures
-        else:
-            print("Skipping state sorting as requested.")
-        
-        # Plot the results to show the user - using newer subplot syntax
-        try:
-            fig = plt.figure(figsize=(8, 8))
-            
-            # Using plotComplexHist properly without ax parameter
-            h = qp.plotComplexHist(data[0], data[1], figsize=[8, 8])
-            
-            # Find the center for plotting
-            center = np.mean(means, axis=0)
-            
-            # Plot the center of mass
-            plt.scatter(center[0], center[1], c='blue', s=150, marker='+', label='Center')
-            
-            # Plot cluster centers with arrows showing trajectory
-            for i in range(len(means)):
-                plt.scatter(means[i, 0], means[i, 1], c=f'C{i}', s=150, marker='x')
-                plt.text(means[i, 0], means[i, 1], f'State {i}', fontsize=14, 
-                        color=f'C{i}', ha='center', va='bottom', fontweight='bold')
+                print(f"Error creating final visualization: {str(e)}")
+                plt.close('all')
                 
-                # Draw a line from center to each point
-                plt.plot([center[0], means[i, 0]], [center[1], means[i, 1]], 'k--', alpha=0.5)
-                
-                # Draw an arrow from current state to next state (if not the last state)
-                if i < len(means) - 1:
-                    plt.arrow(means[i, 0], means[i, 1], 
-                             (means[i+1, 0] - means[i, 0])*0.7, (means[i+1, 1] - means[i, 1])*0.7,
-                             head_width=0.05, head_length=0.1, fc='green', ec='green', alpha=0.7)
+            print(f"K-means clustering complete. Found {self.numModes} cluster centers.")
+            return means, data
             
-            # Draw an arrow from the last state back to the first to complete the circle
-            if len(means) > 2:
-                plt.arrow(means[-1, 0], means[-1, 1], 
-                         (means[0, 0] - means[-1, 0])*0.7, (means[0, 1] - means[-1, 1])*0.7,
-                         head_width=0.05, head_length=0.1, fc='red', ec='red', alpha=0.7)
-            
-            plt.title(f'Automatic K-means Clustering: {self.numModes} States\nState 0 is most populated, clockwise ordering', fontsize=14)
-            plt.xlabel('I [mV]', fontsize=12)
-            plt.ylabel('Q [mV]', fontsize=12)
-            plt.grid(True, alpha=0.3)
-            plt.legend()
-            
-            # Avoid tight_layout - use simple figure adjustment instead
-            plt.subplots_adjust(right=0.85, top=0.9, bottom=0.1, left=0.1)
-                
-            # Ensure figure directory exists before saving
-            if not os.path.exists(self.figure_path):
-                os.makedirs(self.figure_path)
-                print(f"Created directory: {self.figure_path}")
-                
-            # Save the figure for reference with bbox_inches='tight'
-            try:
-                fig_path = os.path.join(self.figure_path, f'KMeans_Initial_Means_{self.numModes}modes_{self.timestamp}.png')
-                fig.savefig(fig_path, bbox_inches='tight', dpi=150)
-                print(f"Saved K-means clustering figure to: {fig_path}")
-            except Exception as e:
-                print(f"Failed to save K-means clustering figure: {str(e)}")
-            finally:
-                plt.close(fig)  # Ensure figure is closed even on error
         except Exception as e:
-            print(f"Error creating final visualization: {str(e)}")
-            plt.close('all')  # Close any open figures
-        
-        print(f"K-means clustering complete. Found {self.numModes} cluster centers.")
-        return means, data
+            print(f"Unhandled error in K-means clustering: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            print("Falling back to manual means selection.")
+            plt.close('all')
+            return self.get_QP_means_from_IQ(avgTime)
 
     def get_initial_QP_means(self, avgTime=3):
         if self.interactive:
@@ -1091,6 +1093,8 @@ class AlazarPowerSweepData:
                 # Use a colormap to generate colors for any number of states
                 colormap = plt.cm.viridis  # viridis is a good colormap that's distinguishable even with many colors
                 colors = [colormap(j/n_comp) for j in range(n_comp)]
+                
+                # Make ellipses - using updated function with axis parameter
                 qp.make_ellipsesHMM(M, h, colors)
                 
                 plt.xlabel('I [mV]')
@@ -1311,4 +1315,50 @@ class AlazarPowerSweepData:
         create_HMM_QP_statistics_plots(self.hdf5_file, self.figure_path, self.numModes)
         print(f"Analysis completed with timestamp: {self.timestamp}")
         print("="*10+"\tHMM ANALYSIS CONCLUDED\t"+"="*10+"\n\n")
+
+def create_IQ_plot(data):
+    """Create an IQ plot for manual mean selection with improved error handling.
+    
+    Args:
+        data: IQ data to plot
+        
+    Returns:
+        None, displays a plot for interaction
+    """
+    try:
+        # Create figure with explicit dimensions
+        plt.figure(figsize=(10, 10))
+        
+        # Create a 2D histogram rather than using plotComplexHist
+        # This gives us more direct control over the plot
+        h = plt.hist2d(data[0], data[1], bins=80, 
+                     norm=matplotlib.colors.LogNorm(), 
+                     cmap=plt.cm.Greys)
+        plt.colorbar(h[3], shrink=0.9, extend='both')
+        
+        # Add grid and set aspect ratio
+        plt.grid(True)
+        plt.gca().set_aspect('equal')
+        
+        # Add labels and title
+        plt.xlabel('I [mV]', fontsize=12)
+        plt.ylabel('Q [mV]', fontsize=12)
+        plt.title('Click to select initial means for each state', fontsize=14)
+        
+        # Use subplots_adjust instead of tight_layout
+        plt.subplots_adjust(right=0.9, top=0.9, bottom=0.1, left=0.1)
+        
+        # Draw the plot
+        plt.draw()
+    except Exception as e:
+        print(f"Error creating IQ plot: {str(e)}")
+        plt.close('all')
+        # If plotting fails, create a minimal fallback plot
+        plt.figure(figsize=(10, 10))
+        plt.scatter(data[0], data[1], s=1, alpha=0.5)
+        plt.xlabel('I [mV]')
+        plt.ylabel('Q [mV]')
+        plt.title('Fallback plot - click to select initial means')
+        plt.grid(True)
+        plt.draw()
 

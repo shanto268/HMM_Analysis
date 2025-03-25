@@ -401,42 +401,56 @@ def make_ellipses(gmm,ax,colors):
         ax.add_artist(ell)
         ax.set_aspect('equal','datalim')
         
-def make_ellipsesHMM(hmm,ax,colors):
+def make_ellipsesHMM(hmm, ax=None, colors=None):
     '''Adds colored ellipses illustrating mean and std dev of mode to the given pyplot subplot.
     
-    for each mode in gmm, plots an ellipse at the mean radius equal to std. dev.
+    for each mode in hmm, plots an ellipse at the mean radius equal to std. dev.
     -----------------------------
-    gmm:    the scikit-learn Gaussian Mixture that fits your data
-    ax:     pyplot subplot you want to add ellipses to
+    hmm:    the hmmlearn HMM object that fits your data
+    ax:     pyplot subplot you want to add ellipses to (optional, uses current axis if None)
     colors: list of colors to use for ellipses. length must match number of modes.
+            If None, uses default colormap.
     -----------------------------
     
     Example:
     h = plotComplexHist(DATA[:,0],DATA[:,1])
-    make_ellipses(guassianMixture,h,['red','#fee090','magenta'])
-    h.set_xlabel('I [mV]')
-    h.set_ylabel('Q [mV]')
-    h.set_title('test with ellipses')
+    make_ellipsesHMM(hmm, h, ['red','#fee090','magenta'])
+    plt.xlabel('I [mV]')
+    plt.ylabel('Q [mV]')
+    plt.title('test with ellipses')
     plt.savefig(r'path/to/save.png')
     '''
+    # Use current axis if none provided
+    if ax is None:
+        ax = plt.gca()
+    
+    # Generate colors if none provided
+    if colors is None:
+        n_components = hmm.means_.shape[0]
+        colors = plt.cm.viridis(np.linspace(0, 1, n_components))
+    
     for n, color in enumerate(colors):
-        # get the covariance matrix for the mode associated with n trapped QPs
-        covariances = hmm.covars_[n][:2,:2]
-        # v are the eigenvalues of covariance matrix, aka the variances along major and minor axis of ellipse. w are the eigenvectors. Order is smallest to v to largest v
-        v, w = np.linalg.eigh(covariances)
-        # normalize the eigenvector associated with the smallest variance, i.e., the variance along the minor axis.
-        u = w[0] / np.linalg.norm(w[0])
-        # get the angle from +x axis to minor axis of ellipse
-        angle = 180*np.arctan2(u[1],u[0])/np.pi
-        # v is now the diameter of the ellipse in minor, major order. It is equal to 2 std deviations.
-        v = 2. *np.sqrt(v)
-        # make the ellipse for mode n. Centered at mean with major and minor radius of 1 std deviation. and rotated to align to the data.
-        ell = Ellipse(hmm.means_[n,:2],v[0],v[1],180+angle,color=color,fill=False)
-        # now we just add the ellipses to the plot. Note that these ellipses shade the area in which all data points are within 1 std deviation of the mean.
-        ell.set_clip_box(ax.bbox)
-        ell.set_alpha(0.8)
-        ax.add_artist(ell)
-        ax.set_aspect('equal','datalim')
+        try:
+            # get the covariance matrix for the mode associated with n trapped QPs
+            covariances = hmm.covars_[n][:2,:2]
+            # v are the eigenvalues of covariance matrix, aka the variances along major and minor axis of ellipse. w are the eigenvectors. Order is smallest to v to largest v
+            v, w = np.linalg.eigh(covariances)
+            # normalize the eigenvector associated with the smallest variance, i.e., the variance along the minor axis.
+            u = w[0] / np.linalg.norm(w[0])
+            # get the angle from +x axis to minor axis of ellipse
+            angle = 180*np.arctan2(u[1],u[0])/np.pi
+            # v is now the diameter of the ellipse in minor, major order. It is equal to 2 std deviations.
+            v = 2. *np.sqrt(v)
+            # make the ellipse for mode n. Centered at mean with major and minor radius of 1 std deviation. and rotated to align to the data.
+            ell = Ellipse(hmm.means_[n,:2],v[0],v[1],180+angle,color=color,fill=False)
+            # now we just add the ellipses to the plot. Note that these ellipses shade the area in which all data points are within 1 std deviation of the mean.
+            ell.set_clip_box(ax.bbox)
+            ell.set_alpha(0.8)
+            ax.add_artist(ell)
+            ax.set_aspect('equal','datalim')
+        except Exception as e:
+            print(f"Warning: Error creating ellipse for state {n}: {str(e)}")
+            continue
 
 def make_ellipses2(means,varis,ax,colors):
     '''Adds colored ellipses illustrating mean and std dev of mode to the given pyplot subplot.
