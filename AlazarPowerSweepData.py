@@ -774,6 +774,7 @@ class AlazarPowerSweepData:
         data = qp.uint16_to_mV(data)
         n_dim = data.shape[0]
         
+        """
         # For faster processing, consider downsampling the data further if it's very large
         data_size = data.shape[1]
         if data_size > 100000 and self.hmm_params.get('covariance_type') in ['diag', 'spherical']:
@@ -795,6 +796,7 @@ class AlazarPowerSweepData:
             step = data_size // max_points
             data = data[:, ::step]
             print(f"New data shape: {data.shape}")
+        """
         
         # Prepare data for HMM (transpose to [n_samples, n_features])
         hmm_data = data.T
