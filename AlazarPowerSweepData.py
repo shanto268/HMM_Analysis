@@ -14,15 +14,16 @@ __email__ = "shanto@usc.edu"
 
 #libraries used
 
+import datetime
 import glob
 import json
 import multiprocessing
 import os
+import re
 import sys
 import time
 import warnings
 
-import fitTools.quasiparticleFunctions as qp
 import h5py
 import matplotlib
 import matplotlib.pyplot as plt
@@ -32,7 +33,9 @@ from hmmlearn import hmm
 from joblib import Parallel, delayed
 from matplotlib.backends.backend_pdf import PdfPages
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from tqdm import tqdm, trange
 
+import quasiparticleFunctions as qp
 from HMM_helper_functions import *
 from HMM_plotter_functions import *
 
@@ -52,7 +55,10 @@ class AlazarPowerSweepData:
 
     def __init__(self, project_path, interactive=True, project_root=None):
         self.project_path = project_path
-        self.figure_path = r"{}\PowerSweepfigures\\".format(self.project_path)
+        # Create a timestamp string for unique file identification
+        self.timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Add timestamp to figure path
+        self.figure_path = os.path.join(project_path, f"PowerSweepfigures_{self.timestamp}")
         self.files = glob.glob(r"{}\**\*.bin".format(self.project_path),recursive=True)
         self.interactive = interactive
         self.project_root = project_root
@@ -90,7 +96,7 @@ class AlazarPowerSweepData:
         
         if self.interactive:
             
-            print("Please Ensure the Following Attenuation Configuration is Correct:\n\n")
+            print("Please Ensure the Following is Correct:\n\n")
             for key,value in atten_config.items():
                 print(key + " = " + str(value))
                 atten_config_value += value
@@ -264,8 +270,12 @@ class AlazarPowerSweepData:
         self.temp = get_temp_from_run(self.files[0])
 
         if plots:
-            print("Creating IQ downsampled plots.....")            
-            create_IQ_downsampled_plots(self.files, self.attens, self.project_path, avgTime)
+            print(f"Creating IQ downsampled plots with timestamp {self.timestamp}.....")            
+            # Create a timestamped directory for IQ plots
+            iq_plot_dir = os.path.join(self.project_path, f"IQ_Plots_{self.timestamp}")
+            if not os.path.exists(iq_plot_dir):
+                os.makedirs(iq_plot_dir)
+            create_IQ_downsampled_plots(self.files, self.attens, iq_plot_dir, avgTime)
         else:
             print("Data loaded without creating IQ downsampled plots....")            
 
@@ -364,6 +374,7 @@ class AlazarPowerSweepData:
 
     def start_HMM_fit(self, intTime=1, SNRmin=3, targetPower=None, numModes=2, n_jobs=None, 
                      covariance_type=None, n_iter=None, tol=None, verbose=None, transition_model=None):
+
         print("\n\n"+"="*10+"\tHMM ANALYSIS STARTED\t"+"="*10)
         
         # Update HMM parameters if provided
@@ -390,7 +401,8 @@ class AlazarPowerSweepData:
 
         if self.interactive:
             chosenAtten = int(input("\nAttenuation below which the system goes non-linear: "))
-            self.power_to_device = self.set_attenuation_configuration()
+            # self.power_to_device = self.set_attenuation_configuration()
+            self.power_to_device = float(input("\nInput the Power to the device (in dB): "))
 
             self.metainfo = self.set_metadata()
 
@@ -404,9 +416,11 @@ class AlazarPowerSweepData:
             covars = self.get_initial_QP_covars(data, means)
             print(f"Extracted Means:\n{means}\n\nEstimated Covariance:\n{covars}\n")
             print("\nStarting HMM Analysis.....\n\n")
-            self.runHMM(means, covars, intTime, SNRmin)
+            self.runhmm(means, covars, intTime, SNRmin)
         else:
-            self.power_to_device = self.set_attenuation_configuration()
+            # self.power_to_device = self.set_attenuation_configuration()
+            # Ask user to input the power to the device
+            self.power_to_device = float(input("\nInput the Power to the device (in dB): "))
             self.metainfo = self.set_metadata()
             self.index = int(np.where(self.power_to_device == targetPower)[0])
 
@@ -423,12 +437,15 @@ class AlazarPowerSweepData:
             print("\nStarting HMM Analysis.....\n\n")
             self.runHMM(means, covars, intTime, SNRmin)
 
+        print(f"Analysis completed with timestamp: {self.timestamp}")
+
     def _process_single_file(self, i, atten, file, means, covars, intTime, SNRmin, skip, savefile, metainfo, hmm_n_jobs=1):
         """Process a single file with HMM analysis - optimized for parallel HMM fitting"""
         print(f"Starting HMM fit for attenuation {atten}...")
         start_time = time.time()
         
         n_comp = self.numModes
+        # Create attenuation subfolder with timestamp
         figpath = os.path.join(self.figure_path, f'ATTEN{atten}')
         if not os.path.exists(figpath):
             os.makedirs(figpath)
@@ -437,6 +454,7 @@ class AlazarPowerSweepData:
         data = qp.loadAlazarData(file)
         data, sr = qp.BoxcarDownsample(data, avgTime=intTime, sampleRate=self.sampleRateFromData, returnRate=True) 
         data = qp.uint16_to_mV(data)
+        n_dim = data.shape[0]
         
         # Process covariance matrices based on the covariance type
         processed_covars = self._handle_covariance(covars, n_comp)
@@ -472,7 +490,8 @@ class AlazarPowerSweepData:
         plt.xlabel('I [mV]')
         plt.ylabel('Q [mV]')
         plt.title(f'Initial Guess for {n_comp} states | {self.power_to_device[i+skip]} dBm')
-        plt.savefig(os.path.join(figpath, f'Initial_Guess_IQ_Histogram_{i+skip}_{self.power_to_device[i+skip]}dBm_{n_comp}modes.png'))
+        # Add timestamp to file name
+        plt.savefig(os.path.join(figpath, f'Initial_Guess_IQ_Histogram_{i+skip}_{self.power_to_device[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
         plt.close()
         
         # Use optimized parallel HMM fitting if supported
@@ -499,8 +518,14 @@ class AlazarPowerSweepData:
         
         # Set covariance based on the processed value
         if self.hmm_params['covariance_type'] == 'tied':
-            M.covars_ = processed_covars
-        else:
+            # For tied covariance, we need a single (n_dim, n_dim) matrix
+            # We'll use the average of all the individual covariances
+            tied_covar = np.zeros((n_dim, n_dim))
+            for i in range(n_comp):
+                tied_covar += processed_covars[i]
+            tied_covar /= n_comp
+            M.covars_ = tied_covar
+        elif self.hmm_params['covariance_type'] == "full" :
             M.covars_ = processed_covars
             
         # Equal starting probabilities
@@ -512,7 +537,7 @@ class AlazarPowerSweepData:
         # Fit the model
         print(f"Fitting HMM for attenuation {atten}...")
         M.fit(data.T)
-        print(f"HMM fitting completed for attenuation {atten}")
+        print(f"The HMM fitting has been completed for attenuation {atten}")
         
         # Read previous data for comparison
         with h5py.File(savefile, 'r') as ff:
@@ -620,7 +645,7 @@ class AlazarPowerSweepData:
         plt.xlabel('I [mV]')
         plt.ylabel('Q [mV]')
         plt.title('HMM fit | {:.2} MHz | {} dBm'.format(sr, self.power_to_device[i+skip]))
-        plt.savefig(os.path.join(figpath, 'HMMfits_{}_{}dBm_{}modes.png'.format(i+skip, self.power_to_device[i+skip], self.numModes)))
+        plt.savefig(os.path.join(figpath, f'HMMfits_{i+skip}_{self.power_to_device[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
         plt.close()
         
         # 2. Plot I-Q histogram colored by state after HMM analysis
@@ -636,7 +661,7 @@ class AlazarPowerSweepData:
         plt.ylabel('Q [mV]')
         plt.title('I-Q Data Colored by HMM State | {:.2} MHz | {} dBm'.format(sr, self.power_to_device[i+skip]))
         plt.legend()
-        plt.savefig(os.path.join(figpath, 'IQ_by_state_{}_{}dBm_{}modes.png'.format(i+skip, self.power_to_device[i+skip], self.numModes)))
+        plt.savefig(os.path.join(figpath, f'IQ_by_state_{i+skip}_{self.power_to_device[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
         plt.close()
         
         # 3. Individual and cumulative state IQ plots
@@ -658,7 +683,7 @@ class AlazarPowerSweepData:
             ax.scatter(M.means_[state_idx, 0], M.means_[state_idx, 1], color='red', s=100, marker='x')
         
         plt.tight_layout()
-        plt.savefig(os.path.join(figpath, 'individual_state_IQ_{}_{}dBm_{}modes.png'.format(i+skip, self.power_to_device[i+skip], self.numModes)))
+        plt.savefig(os.path.join(figpath, f'individual_state_IQ_{i+skip}_{self.power_to_device[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
         plt.close()
         
         # Cumulative state plots
@@ -684,7 +709,7 @@ class AlazarPowerSweepData:
                 ax.scatter(M.means_[j, 0], M.means_[j, 1], color='red', s=100, marker='x')
         
         plt.tight_layout()
-        plt.savefig(os.path.join(figpath, 'cumulative_state_IQ_{}_{}dBm_{}modes.png'.format(i+skip, self.power_to_device[i+skip], self.numModes)))
+        plt.savefig(os.path.join(figpath, f'cumulative_state_IQ_{i+skip}_{self.power_to_device[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
         plt.close()
         
         # 4. 1D distributions of I and Q for each state
@@ -715,7 +740,7 @@ class AlazarPowerSweepData:
         ax2.legend()
         
         plt.tight_layout()
-        plt.savefig(os.path.join(figpath, 'IQ_1D_distributions_{}_{}dBm_{}modes.png'.format(i+skip, self.power_to_device[i+skip], self.numModes)))
+        plt.savefig(os.path.join(figpath, f'IQ_1D_distributions_{i+skip}_{self.power_to_device[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
         plt.close()
         
         # Individual I and Q distributions for each state (separate subplots)
@@ -766,13 +791,13 @@ class AlazarPowerSweepData:
             ax.grid(True)
         
         plt.tight_layout()
-        plt.savefig(os.path.join(figpath, 'individual_IQ_distributions_{}_{}dBm_{}modes.png'.format(i+skip, self.power_to_device[i+skip], self.numModes)))
+        plt.savefig(os.path.join(figpath, f'individual_IQ_distributions_{i+skip}_{self.power_to_device[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
         plt.close()
 
         # Plot time series
         fig, ax = qp.plotTimeSeries(data, Q, np.arange(Q.size)/sr, 1500, 2000, zeroTime=True)
         plt.title('{:.2} MHz | {} dBm'.format(sr, self.power_to_device[i+skip]))
-        plt.savefig(os.path.join(figpath, 'TimeSeries__{}_{}dBm_{}modes.png'.format(i+skip, self.power_to_device[i+skip], self.numModes)))
+        plt.savefig(os.path.join(figpath, f'TimeSeries__{i+skip}_{self.power_to_device[i+skip]}dBm_{n_comp}modes_{self.timestamp}.png'))
         plt.close()
 
         # Get transition rates
@@ -804,7 +829,7 @@ class AlazarPowerSweepData:
                 fp.attrs.create(key, metainfo[key])
         
         # Save HMM model parameters as .npz file
-        npz_path = os.path.join(figpath, f'HMM_params_{i+skip}_{self.power_to_device[i+skip]}dBm_{n_comp}modes.npz')
+        npz_path = os.path.join(figpath, f'HMM_params_{i+skip}_{self.power_to_device[i+skip]}dBm_{n_comp}modes_{self.timestamp}.npz')
         np.savez(npz_path, 
                  means=M.means_, 
                  covars=M.covars_,
@@ -818,7 +843,8 @@ class AlazarPowerSweepData:
                  power=self.power_to_device[i+skip],
                  attenuation=atten,
                  sampleRate=sr,
-                 num_modes=n_comp)
+                 num_modes=n_comp,
+                 timestamp=self.timestamp)
 
         elapsed = time.time() - start_time
         print(f"Completed HMM fit for attenuation {atten} in {elapsed:.2f} seconds")
@@ -830,32 +856,41 @@ class AlazarPowerSweepData:
         skip = np.copy(self.index)
         n_comp = self.numModes
         
-        # Create PDF files
-        hmm_fits_pdf = PdfPages('{}/HMM_IQ_fits_{}modes.pdf'.format(self.project_path, self.numModes))
-        hmm_time_series_pdf = PdfPages('{}/HMM_time_series_{}modes.pdf'.format(self.project_path, self.numModes))
+        # Create PDF files with timestamp
+        hmm_fits_pdf = PdfPages('{}/HMM_IQ_fits_{}modes_{}.pdf'.format(self.project_path, self.numModes, self.timestamp))
+        hmm_time_series_pdf = PdfPages('{}/HMM_time_series_{}modes_{}.pdf'.format(self.project_path, self.numModes, self.timestamp))
         
-        # Set up HDF5 file
-        savefile = os.path.join(self.project_path, 'AnalyisResults', 'FullDataset_M{}_T{}_PHI{}_.hdf5'.format(self.numModes, self.temp, str(self.phi).replace(".", "p")[:5]))
-        self.hdf5_file = savefile
-        if not os.path.exists(os.path.split(savefile)[0]):
-            os.makedirs(os.path.split(savefile)[0])
+        # Set up HDF5 file with timestamp
+        analysis_dir = os.path.join(self.project_path, 'AnalysisResults_{}'.format(self.timestamp))
+        if not os.path.exists(analysis_dir):
+            os.makedirs(analysis_dir)
             
+        savefile = os.path.join(analysis_dir, 'FullDataset_M{}_T{}_PHI{}_{}.hdf5'.format(
+            self.numModes, self.temp, str(self.phi).replace(".", "p")[:5], self.timestamp))
+        self.hdf5_file = savefile
+        
         # Set up initial HDF5 structure
         with h5py.File(savefile, 'a') as f:
             for atten in self.attens[self.index:]:
                 g = f.require_group(f'ATTEN{atten}')
                 for key in self.metainfo:
                     g.attrs.create(key, self.metainfo[key])
+                # Add timestamp as attribute
+                g.attrs.create('timestamp', self.timestamp)
         
         # Prepare data for processing
         files_to_process = []
         for i, atten, file in zip(np.arange(len(self.attens[self.index:])), self.attens[self.index:], self.files[self.index:]):
             files_to_process.append((i, atten, file))
         
-        print(f"Starting HMM processing for {len(files_to_process)} files...")
-        print(f"Using {self.num_cores} CPU cores for HMM-level parallelism")
+        print(f"Starting HMM processing for {len(files_to_process)} files with timestamp {self.timestamp}...")
         
-        # Process files sequentially with optimized HMM-level parallelism
+        if HMM_SUPPORTS_PARALLEL:
+            print(f"Using {self.num_cores} CPU cores for HMM-level parallelism")
+        else:
+            print("Parallel processing not supported by your hmmlearn version. Running in single-core mode.")
+        
+        # Process files sequentially with optimized HMM-level parallelism if available
         HMM = []
         current_means = means
         current_covars = covars
@@ -864,7 +899,7 @@ class AlazarPowerSweepData:
             print(f"Processing file {i+1}/{len(files_to_process)}: attenuation {atten}")
             result = self._process_single_file(i, atten, file, current_means, current_covars, 
                                             intTime, SNRmin, skip, savefile, self.metainfo,
-                                            hmm_n_jobs=self.num_cores)  # Use all cores for each HMM fit
+                                            hmm_n_jobs=self.num_cores)  # This parameter will be ignored if not supported
             
             if result is not None:
                 HMM.append(result)
@@ -880,7 +915,7 @@ class AlazarPowerSweepData:
         hmm_time_series_pdf.close()
         self.HMM = HMM
         
-        # Save all HMM models to a single NPZ file
+        # Save all HMM models to a single NPZ file with timestamp
         if len(HMM) > 0:
             hmm_models_data = {
                 'num_models': len(HMM),
@@ -888,7 +923,8 @@ class AlazarPowerSweepData:
                 'phi': self.phi,
                 'temp': self.temp,
                 'attens': self.attens[self.index:self.index+len(HMM)],
-                'powers': self.power_to_device[self.index:self.index+len(HMM)]
+                'powers': self.power_to_device[self.index:self.index+len(HMM)],
+                'timestamp': self.timestamp
             }
             
             # Add data for each model
@@ -898,12 +934,14 @@ class AlazarPowerSweepData:
                 hmm_models_data[f'model{i}_transmat'] = model.transmat_
                 hmm_models_data[f'model{i}_startprob'] = model.startprob_
             
-            # Save to NPZ file
+            # Save to NPZ file with timestamp
             np.savez(
-                os.path.join(self.project_path, 'AnalyisResults', f'HMM_models_M{self.numModes}_T{self.temp}_PHI{str(self.phi).replace(".","p")[:5]}.npz'),
+                os.path.join(analysis_dir, f'HMM_models_M{self.numModes}_T{self.temp}_PHI{str(self.phi).replace(".","p")[:5]}_{self.timestamp}.npz'),
                 **hmm_models_data
             )
         
         print("Starting post-HMM analysis plots.....")
+        # Pass timestamp to ensure statistics plots are also uniquely named
         create_HMM_QP_statistics_plots(self.hdf5_file, self.figure_path, self.numModes)
+        print(f"Analysis completed with timestamp: {self.timestamp}")
         print("="*10+"\tHMM ANALYSIS CONCLUDED\t"+"="*10+"\n\n")

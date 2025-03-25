@@ -2,5 +2,4 @@ NBR07*.ipynb
 test/*
 data/*
 workspace.xml
-__pycache__/AlazarPowerSweepData.cpython-311.pyc
-__pycache__/HMM_helper_functions.cpython-311.pyc
+__pycache__/

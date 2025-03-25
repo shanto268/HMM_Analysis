@@ -1,7 +1,6 @@
 import glob
 import subprocess
 
-import fitTools.quasiparticleFunctions as qp
 import h5py
 import matplotlib.pyplot as plt
 import numpy as np
@@ -10,6 +9,7 @@ from scipy.optimize import curve_fit, leastsq
 from scipy.signal import oaconvolve, savgol_filter, windows
 
 import HMM_helper_functions as hmm_func
+import quasiparticleFunctions as qp
 
 
 def weightedExp(t,a,tau):
