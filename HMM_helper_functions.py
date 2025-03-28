@@ -22,8 +22,9 @@ import matplotlib.colors
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from HMM_plotter_functions import *
 from matplotlib.backends.backend_pdf import PdfPages
+
+from HMM_plotter_functions import *
 
 
 def get_all_phis_and_sampleRate(project_path):

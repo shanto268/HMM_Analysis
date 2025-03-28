@@ -219,94 +219,284 @@ def create_weighted_lifetime_distribution(hdf5_file, figpath, numModes):
         traceback.print_exc()
 
 def create_HMM_QP_statistics_plots(hdf5_file, figpath, numModes):
+    """
+    Create a set of plots for analyzing HMM QP statistics.
+    
+    Parameters:
+    -----------
+    hdf5_file : str
+        Path to the HDF5 file containing the HMM results
+    figpath : str
+        Path to save the figures
+    numModes : int
+        Number of modes in the HMM model (2 or 3)
+    """
     hmm_func.set_plot_style()
     figpath = figpath + f"/post_HMM_fit_plots_M{numModes}"
     hmm_func.create_path(figpath)
-    try:
-        create_mean_occupation_plot(hdf5_file, figpath)
-    except Exception as err:
-        print("Issue with \"create_mean_occupation_plot\" \nError message {}".format(err))
-    try:
-        create_transition_probability_plot(hdf5_file, figpath, numModes)
-    except Exception as err:
-        print("Issue with \"create_transition_probability_plot\" \nError message {}".format(err))
-    try:
-        create_transition_rate_plot(hdf5_file, figpath, numModes)
-    except Exception as err:
-        print("Issue with \"create_transition_rate_plot\" \nError message {}".format(err))
-    try:
-        create_transition_lifetimes_plot(hdf5_file, figpath, numModes)
-    except Exception as err:
-        print("Issue with \"create_transition_lifetimes_plot\" \nError message {}".format(err))
-    try:
-        create_lifetime_distribution(hdf5_file, figpath)
-    except Exception as err:
-        print("Issue with \"create_lifetime_distribution\" \nError message {}".format(err))
-    try:
-        create_weighted_lifetime_distribution(hdf5_file, figpath, numModes)
-    except Exception as err:
-        print("Issue with \"create_weighted_lifetime_distribution\" \nError message {}".format(err))
-
+    
+    # Use a dictionary to store function names and references for cleaner code
+    plot_functions = {
+        "mean_occupation": create_mean_occupation_plot,
+        "transition_probability": create_transition_probability_plot,
+        "transition_rate": create_transition_rate_plot,
+        "transition_lifetimes": create_transition_lifetimes_plot,
+        "lifetime_distribution": create_lifetime_distribution,
+        "weighted_lifetime_distribution": create_weighted_lifetime_distribution
+    }
+    
+    # Check if file exists
+    if not os.path.exists(hdf5_file):
+        print(f"Error: HDF5 file '{hdf5_file}' does not exist")
+        return
+    
+    # Check numModes is valid
+    if numModes not in [2, 3]:
+        print(f"Error: Unsupported number of modes: {numModes}. Only 2 or 3 modes are supported.")
+        return
+    
+    print(f"Creating HMM QP statistics plots from {hdf5_file}")
+    print(f"Saving plots to {figpath}")
+    
+    # Create each plot with error handling
+    for name, func in plot_functions.items():
+        print(f"Creating {name} plot...")
+        try:
+            # For functions that need numModes
+            if name in ["transition_probability", "transition_rate", "transition_lifetimes", "weighted_lifetime_distribution"]:
+                func(hdf5_file, figpath, numModes)
+            else:
+                func(hdf5_file, figpath)
+            print(f"Successfully created {name} plot")
+        except Exception as err:
+            print(f"Error in {name} plot generation:")
+            print(f"  - Error message: {str(err)}")
+            import traceback
+            traceback.print_exc()
+            print(f"  - Continuing with next plot...")
+    
+    print(f"Completed HMM QP statistics plots generation")
 
 def create_summary_plot_pdf(figpath):
     raise NotImplementedError()
 
 def create_mean_occupation_plot(hdf5_file, figpath):
+    """
+    Create a plot showing mean occupation vs. LO power.
+    
+    Parameters:
+    -----------
+    hdf5_file : str
+        Path to the HDF5 file containing the HMM results
+    figpath : str
+        Path to save the figures
+    """
     LOps = []
     Qmeans = []
-    with h5py.File(hdf5_file,'r') as fb:
-        for key in list(fb.keys()):
-            LOp = fb[key].attrs.get('LOpower')
-            Qmean = fb[key].attrs.get('mean')
-            LOps.append(LOp)
-            Qmeans.append(Qmean)
-    figname = figpath + "/" 'meanOccupation.png'
-    create_2_scale_scatter_plots(LOps, Qmeans, 'LO power [dBm]', 'QP Occupation Number', "Mean Occupation" ,figname)
+    
+    try:
+        with h5py.File(hdf5_file, 'r') as fb:
+            for key in list(fb.keys()):
+                try:
+                    LOp = fb[key].attrs.get('LOpower')
+                    Qmean = fb[key].attrs.get('mean')
+                    
+                    if LOp is None:
+                        print(f"Warning: LOpower not found for {key}")
+                        continue
+                        
+                    if Qmean is None:
+                        print(f"Warning: Mean occupation not found for {key}")
+                        continue
+                        
+                    LOps.append(LOp)
+                    Qmeans.append(Qmean)
+                except Exception as e:
+                    print(f"Error processing {key}: {str(e)}")
+                    continue
+    except Exception as e:
+        print(f"Error opening HDF5 file {hdf5_file}: {str(e)}")
+        return
+    
+    # Check if we have any data
+    if not LOps or not Qmeans:
+        print("No mean occupation data found")
+        return
+        
+    # Create the figure directory if it doesn't exist
+    os.makedirs(os.path.dirname(figpath), exist_ok=True)
+    
+    figname = figpath + "/" + 'meanOccupation.png'
+    create_2_scale_scatter_plots(LOps, Qmeans, 'LO power [dBm]', 
+                               'QP Occupation Number', 
+                               "Mean Occupation",
+                               figname)
 
 
-
-def create_2_scale_scatter_plots(x,y,xlabel,ylabel,title,figname):
-    plt.figure(1)
+def create_2_scale_scatter_plots(x, y, xlabel, ylabel, title, figname):
+    """
+    Create scatter plots with both linear and log scales.
+    
+    Parameters:
+    -----------
+    x : array-like
+        X values for the scatter plot
+    y : array-like
+        Y values for the scatter plot
+    xlabel : str
+        Label for the x-axis
+    ylabel : str
+        Label for the y-axis
+    title : str
+        Title for the plots
+    figname : str
+        Path to save the figure
+    """
+    plt.figure(figsize=(10, 8))
     plt.suptitle(title)
+    
+    # Linear scale plot
     plt.subplot(211)
     plt.scatter(x, y, color="red")
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
+    plt.grid(True, alpha=0.3)
 
+    # Log scale plot - handle non-positive values
+    plt.subplot(212)
     try:
-        plt.subplot(212)
-        plt.scatter(x, y, color="red")
-        plt.xlabel(xlabel)
-        plt.ylabel(ylabel)
-        plt.yscale('log')
-        plt.savefig(figname, bbox_inches='tight')
-    except:
-        pass
+        # Filter out non-positive values for log scale
+        valid_indices = []
+        valid_y_values = []
+        valid_x_values = []
+        
+        for i, val in enumerate(y):
+            if val > 0 and i < len(x):  # Ensure we have a matching x value
+                valid_indices.append(i)
+                valid_y_values.append(val)
+                valid_x_values.append(x[i])
+        
+        # Only plot if we have valid positive values
+        if len(valid_y_values) > 0:
+            plt.scatter(valid_x_values, valid_y_values, color="red")
+            plt.xlabel(xlabel)
+            plt.ylabel(ylabel)
+            plt.yscale('log')
+            plt.grid(True, alpha=0.3)
+            
+            if len(valid_y_values) < len(y):
+                plt.figtext(0.1, 0.01, f"Note: {len(y) - len(valid_y_values)} non-positive values not shown in log scale", 
+                           fontsize=8, style='italic')
+        else:
+            plt.figtext(0.5, 0.5, "No positive values available for log scale plotting", 
+                       ha='center', fontsize=10, color='red')
+    except Exception as e:
+        print(f"Warning: Error creating log scale plot: {str(e)}")
+        # Create a message in the plot to indicate the issue
+        plt.figtext(0.5, 0.5, f"Log scale unavailable: {str(e)}", 
+                   ha='center', fontsize=10, color='red')
+    
+    # Save the figure
+    try:
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(figname), exist_ok=True)
+        plt.savefig(figname, bbox_inches='tight', dpi=150)
+        print(f"Saved figure to {figname}")
+    except Exception as e:
+        print(f"Error saving figure: {str(e)}")
+    
     plt.close()
 
 
 
-def create_2_scale_plots(x,y,xlabel,ylabel,title,figname):
-    plt.figure(1)
+def create_2_scale_plots(x, y, xlabel, ylabel, title, figname):
+    """
+    Create line plots with both linear and log scales.
+    
+    Parameters:
+    -----------
+    x : array-like
+        X values for the line plot
+    y : array-like
+        Y values for the line plot
+    xlabel : str
+        Label for the x-axis
+    ylabel : str
+        Label for the y-axis
+    title : str
+        Title for the plots
+    figname : str
+        Path to save the figure
+    """
+    plt.figure(figsize=(10, 8))
     plt.suptitle(title)
+    
+    # Linear scale plot
     plt.subplot(211)
     plt.plot(x, y)
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
+    plt.grid(True, alpha=0.3)
 
+    # Log scale plot - handle non-positive values
+    plt.subplot(212)
     try:
-        plt.subplot(212)
-        plt.plot(x, y)
-        plt.xlabel(xlabel)
-        plt.ylabel(ylabel)
-        plt.yscale('log')
-        plt.savefig(figname, bbox_inches='tight')
-    except:
-        pass
+        # Filter out non-positive values for log scale
+        valid_indices = []
+        valid_y_values = []
+        valid_x_values = []
+        
+        for i, val in enumerate(y):
+            if val > 0 and i < len(x):  # Ensure we have a matching x value
+                valid_indices.append(i)
+                valid_y_values.append(val)
+                valid_x_values.append(x[i])
+        
+        # Only plot if we have valid positive values
+        if len(valid_y_values) > 0:
+            plt.plot(valid_x_values, valid_y_values)
+            plt.xlabel(xlabel)
+            plt.ylabel(ylabel)
+            plt.yscale('log')
+            plt.grid(True, alpha=0.3)
+            
+            if len(valid_y_values) < len(y):
+                plt.figtext(0.1, 0.01, f"Note: {len(y) - len(valid_y_values)} non-positive values not shown in log scale", 
+                           fontsize=8, style='italic')
+        else:
+            plt.figtext(0.5, 0.5, "No positive values available for log scale plotting", 
+                       ha='center', fontsize=10, color='red')
+    except Exception as e:
+        print(f"Warning: Error creating log scale plot: {str(e)}")
+        # Create a message in the plot to indicate the issue
+        plt.figtext(0.5, 0.5, f"Log scale unavailable: {str(e)}", 
+                   ha='center', fontsize=10, color='red')
+    
+    # Save the figure
+    try:
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(figname), exist_ok=True)
+        plt.savefig(figname, bbox_inches='tight', dpi=150)
+        print(f"Saved figure to {figname}")
+    except Exception as e:
+        print(f"Error saving figure: {str(e)}")
+    
     plt.close()
 
 
 def create_transition_probability_plot(hdf5_file, figpath, numModes):
+    """
+    Create a plot showing transition probabilities between states.
+    
+    Parameters:
+    -----------
+    hdf5_file : str
+        Path to the HDF5 file containing the HMM results
+    figpath : str
+        Path to save the figures
+    numModes : int
+        Number of modes in the HMM model (2 or 3)
+    """
     if numModes == 2:
         P0s = []
         P1s = []
@@ -319,59 +509,145 @@ def create_transition_probability_plot(hdf5_file, figpath, numModes):
         ys = [P0s, P1s, P2s]
         labels = ["P0","P1", "P2"]
     else:
-        raise ValueError()
+        raise ValueError(f"Unsupported numModes: {numModes}")
+        
     LOps = []
 
-    with h5py.File(hdf5_file,'r') as fb:
+    with h5py.File(hdf5_file, 'r') as fb:
         for key in list(fb.keys()):
-            LOp = fb[key].attrs.get('LOpower')
+            try:
+                LOp = fb[key].attrs.get('LOpower')
+                if LOp is None:
+                    print(f"Warning: LOpower not found for {key}")
+                    continue
+                
+                LOps.append(LOp)
+                
+                if numModes == 2:
+                    try:
+                        P0 = fb[key].attrs.get('P0')
+                        P1 = fb[key].attrs.get('P1')
+                        
+                        if P0 is None or P1 is None:
+                            print(f"Warning: Missing probability data for {key}")
+                            continue
+                            
+                        P0s.append(P0)
+                        P1s.append(P1)
+                    except Exception as e:
+                        print(f"Error reading probabilities for {key}: {str(e)}")
+                        continue
+                        
+                elif numModes == 3:
+                    try:
+                        P0 = fb[key].attrs.get('P0')
+                        P1 = fb[key].attrs.get('P1')
+                        P2 = fb[key].attrs.get('P2')
+                        
+                        if P0 is None or P1 is None or P2 is None:
+                            print(f"Warning: Missing probability data for {key}")
+                            continue
+                            
+                        P0s.append(P0)
+                        P1s.append(P1)
+                        P2s.append(P2)
+                    except Exception as e:
+                        print(f"Error reading probabilities for {key}: {str(e)}")
+                        continue
+                else:
+                    raise ValueError(f"Unsupported numModes: {numModes}")
+            except Exception as e:
+                print(f"Error processing {key}: {str(e)}")
+                continue
 
-            LOps.append(LOp)
-            if numModes == 2:
-                P0 = fb[key].attrs.get('P0')
-                P1 = fb[key].attrs.get('P1')
-                P0s.append(P0)
-                P1s.append(P1)
-            elif numModes == 3:
-                P0 = fb[key].attrs.get('P0')
-                P1 = fb[key].attrs.get('P1')
-                P2 = fb[key].attrs.get('P2')
-                P0s.append(P0)
-                P1s.append(P1)
-                P2s.append(P2)
-            else:
-                raise ValueError()
+    # Filter out None values and check if we have any data
+    LOps = list(filter(lambda item: item is not None, LOps))
+    
+    if not LOps:
+        print(f"No valid data found for transition probability plot")
+        return
+        
+    # Verify we have matching data sizes
+    min_length = min(len(LOps), min([len(y) for y in ys]))
+    if min_length < len(LOps):
+        print(f"Warning: Data sizes don't match. Truncating to {min_length} points")
+        LOps = LOps[:min_length]
+        for i in range(len(ys)):
+            ys[i] = ys[i][:min_length]
 
     figname = figpath + "/" + "probabilities.png"
-    create_2_scale_multiple_scatter_plots(LOps, ys, "LO Power [dBm]", 'Probability of mode', labels, "Transition Probabilities", figname)
+    create_2_scale_multiple_scatter_plots(LOps, ys, "LO Power [dBm]", 
+                                         'Probability of mode', 
+                                         labels, 
+                                         "Transition Probabilities", 
+                                         figname)
 
 
-def create_2_scale_multiple_scatter_plots(x,ys,xlabel,ylabel,labels,title,figname):
-    plt.figure(1)
+def create_2_scale_multiple_scatter_plots(x, ys, xlabel, ylabel, labels, title, figname):
+    plt.figure(1, figsize=(10, 8))
     plt.suptitle(title)
+    
+    # Linear scale plot
     plt.subplot(211)
-    for i,y in enumerate(ys):
-        plt.scatter(x, ys[i],label=labels[i])
+    for i, y in enumerate(ys):
+        plt.scatter(x, y, label=labels[i])
     plt.xlabel(xlabel)
     plt.legend()
     plt.ylabel(ylabel)
+    plt.grid(True, alpha=0.3)
 
+    # Log scale plot - handle non-positive values
     plt.subplot(212)
     try:
-        for i,y in enumerate(ys):
-            plt.scatter(x, ys[i],label=labels[i])
+        for i, y in enumerate(ys):
+            # Filter out non-positive values for log scale
+            valid_indices = []
+            valid_y_values = []
+            valid_x_values = []
+            
+            for j, val in enumerate(y):
+                if val > 0 and j < len(x):  # Ensure we have a matching x value
+                    valid_indices.append(j)
+                    valid_y_values.append(val)
+                    valid_x_values.append(x[j])
+            
+            # Only plot if we have valid positive values
+            if len(valid_y_values) > 0:
+                plt.scatter(valid_x_values, valid_y_values, label=labels[i])
+            else:
+                print(f"Warning: No positive values for {labels[i]} - skipping log plot for this series")
+                
         plt.xlabel(xlabel)
         plt.ylabel(ylabel)
         plt.yscale('log')
         plt.legend()
-    except:
-        pass
-    plt.savefig(figname, bbox_inches='tight')
+        plt.grid(True, alpha=0.3)
+        plt.figtext(0.1, 0.01, "Note: Only positive values shown in log scale", fontsize=8, style='italic')
+    except Exception as e:
+        print(f"Warning: Error creating log scale plot: {str(e)}")
+        # Create a message in the plot to indicate the issue
+        plt.figtext(0.5, 0.5, f"Log scale unavailable: {str(e)}", 
+                   ha='center', fontsize=10, color='red')
+    
+    # Use bbox_inches='tight' to ensure everything fits
+    plt.savefig(figname, bbox_inches='tight', dpi=150)
     plt.close()
 
 
 
 def create_transition_rate_plot(hdf5_file, figpath, numModes):
+    """
+    Create a plot showing transition rates between states.
+    
+    Parameters:
+    -----------
+    hdf5_file : str
+        Path to the HDF5 file containing the HMM results
+    figpath : str
+        Path to save the figures
+    numModes : int
+        Number of modes in the HMM model (2 or 3)
+    """
     if numModes == 2:
         rate01 = []
         rate10 = []
@@ -380,48 +656,63 @@ def create_transition_rate_plot(hdf5_file, figpath, numModes):
     elif numModes == 3:
         rate01 = []
         rate10 = []
-
         rate02 = []
         rate20 = []
-
         rate12 = []
         rate21 = []
-
         ys = [rate01, rate10, rate02, rate20, rate12, rate21]
         labels = ['$\\Gamma_{01}$', '$\\Gamma_{10}$', '$\\Gamma_{02}$', '$\\Gamma_{20}$', '$\\Gamma_{12}$', '$\\Gamma_{21}$']
     else:
-        raise ValueError()
+        raise ValueError(f"Unsupported numModes: {numModes}")
+        
     LOps = []
 
-    with h5py.File(hdf5_file,'r') as fb:
+    with h5py.File(hdf5_file, 'r') as fb:
         for key in list(fb.keys()):
             try:
                 LOp = fb[key].attrs.get('LOpower')
-
+                if LOp is None:
+                    print(f"Warning: LOpower not found for {key}")
+                    continue
+                    
                 LOps.append(LOp)
-                rates = fb[key]['transitionRatesMHz'][:]
+                
+                # Safely get the transition rates
+                try:
+                    rates = fb[key]['transitionRatesMHz'][:]
+                except Exception as e:
+                    print(f"Error reading transition rates for {key}: {str(e)}")
+                    continue
 
                 if numModes == 2:
-                    rate01.append(rates[0,1])
-                    rate10.append(rates[1,0])
+                    rate01.append(rates[0, 1])
+                    rate10.append(rates[1, 0])
                 elif numModes == 3:
-                    rate01.append(rates[0,1])
-                    rate10.append(rates[1,0])
-
-                    rate02.append(rates[0,2])
-                    rate20.append(rates[2,0])
-
-                    rate12.append(rates[1,2])
-                    rate21.append(rates[2,1])
-
+                    rate01.append(rates[0, 1])
+                    rate10.append(rates[1, 0])
+                    rate02.append(rates[0, 2])
+                    rate20.append(rates[2, 0])
+                    rate12.append(rates[1, 2])
+                    rate21.append(rates[2, 1])
                 else:
-                    raise ValueError()
-            except:
-                pass
+                    raise ValueError(f"Unsupported numModes: {numModes}")
+            except Exception as e:
+                print(f"Error processing {key}: {str(e)}")
+                continue
 
+    # Filter out None values
     LOps = list(filter(lambda item: item is not None, LOps))
+    
+    if not LOps:
+        print(f"No valid data found for transition rate plot")
+        return
+        
     figname = figpath + "/" + "transitionRatesMHz.png"
-    create_2_scale_multiple_scatter_plots(LOps, ys, "LO Power [dBm]", 'Transition Rate [MHz]', labels, "Transition Rates", figname)
+    create_2_scale_multiple_scatter_plots(LOps, ys, "LO Power [dBm]", 
+                                         'Transition Rate [MHz]', 
+                                         labels, 
+                                         "Transition Rates", 
+                                         figname)
 
 
 
@@ -434,36 +725,70 @@ def create_transition_lifetimes_plot(hdf5_file, figpath, numModes):
     elif numModes == 3:
         tau0 = []
         tau1 = []
-        tau3 = []
-        ys = [tau0, tau1, tau3]
+        tau2 = []
+        ys = [tau0, tau1, tau2]
         labels = ['$\\tau_{0}$', '$\\tau_{1}$', '$\\tau_{2}$']
     else:
-        raise ValueError()
+        raise ValueError(f"Unsupported numModes: {numModes}")
+    
     LOps = []
 
-    with h5py.File(hdf5_file,'r') as fb:
+    with h5py.File(hdf5_file, 'r') as fb:
         for key in list(fb.keys()):
             try:
                 LOp = fb[key].attrs.get('LOpower')
-
+                if LOp is None:
+                    print(f"Warning: LOpower not found for {key}")
+                    continue
+                    
                 LOps.append(LOp)
-                rates = fb[key]['transitionRatesMHz'][:]
+                
+                # Safely get the transition rates
+                try:
+                    rates = fb[key]['transitionRatesMHz'][:]
+                except Exception as e:
+                    print(f"Error reading transition rates for {key}: {str(e)}")
+                    continue
 
+                # Calculate lifetimes as 1/rate for each state
+                # But skip if the rate is 0 or negative to avoid division by zero or negative lifetimes
                 if numModes == 2:
-                    tau0.append(rates[0,0])
-                    tau1.append(rates[1,1])
+                    # The lifetimes are the inverse of the sum of transition rates out of each state
+                    # For each state i, get the sum of all rates i,j where j≠i
+                    rate_out_0 = np.sum(rates[0, 1:])  # Sum of rates from state 0 to all other states
+                    rate_out_1 = np.sum(rates[1, :1])   # Sum of rates from state 1 to all other states
+                    
+                    # Only append if rates are positive to avoid division by zero or negative lifetimes
+                    tau0.append(1/rate_out_0 if rate_out_0 > 0 else np.nan)
+                    tau1.append(1/rate_out_1 if rate_out_1 > 0 else np.nan)
+                    
                 elif numModes == 3:
-                    tau0.append(rates[0,0])
-                    tau1.append(rates[1,1])
-                    tau3.append(rates[2,2])
-
+                    # Calculate sum of rates out of each state
+                    rate_out_0 = rates[0, 1] + rates[0, 2]  # Sum of rates from state 0 to states 1 and 2
+                    rate_out_1 = rates[1, 0] + rates[1, 2]  # Sum of rates from state 1 to states 0 and 2
+                    rate_out_2 = rates[2, 0] + rates[2, 1]  # Sum of rates from state 2 to states 0 and 1
+                    
+                    # Only append if rates are positive
+                    tau0.append(1/rate_out_0 if rate_out_0 > 0 else np.nan)
+                    tau1.append(1/rate_out_1 if rate_out_1 > 0 else np.nan)
+                    tau2.append(1/rate_out_2 if rate_out_2 > 0 else np.nan)
                 else:
-                    raise ValueError()
-            except:
-                pass
+                    raise ValueError(f"Unsupported numModes: {numModes}")
+            except Exception as e:
+                print(f"Error processing {key}: {str(e)}")
+                continue
 
+    # Filter out None values
     LOps = list(filter(lambda item: item is not None, LOps))
+    
+    # Replace NaN values with zeros for plotting (they'll be filtered in log scale)
+    for y_list in ys:
+        for i in range(len(y_list)):
+            if np.isnan(y_list[i]):
+                y_list[i] = 0
+    
     figname = figpath + "/" + "transition_lifetimes.png"
-    create_2_scale_multiple_scatter_plots(LOps, ys, "LO Power [dBm]", 'Lifetimes [$\\mu$]', labels, "Lifetimes from HMM", figname)
+    create_2_scale_multiple_scatter_plots(LOps, ys, "LO Power [dBm]", 'Lifetimes [$\\mu$s]', 
+                                        labels, "Lifetimes from HMM", figname)
 
 
