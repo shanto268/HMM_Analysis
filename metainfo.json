@@ -8,9 +8,9 @@
     "ClearingCoupler": "False",
     "Device_id": "NBRL1A",
     "f0": 5.7807,
-    "Temp": 25.0,
+    "Temp": 26.0,
     "sampleRateMHz": 10,
-    "durationSeconds": 30,
-    "LOf": 5.74813,
-    "phi": 0.4
+    "durationSeconds": 5,
+    "LOf": 5.7347,
+    "phi": 0.46
 }

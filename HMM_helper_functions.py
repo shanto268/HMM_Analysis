@@ -22,9 +22,8 @@ import matplotlib.colors
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.backends.backend_pdf import PdfPages
-
 from HMM_plotter_functions import *
+from matplotlib.backends.backend_pdf import PdfPages
 
 
 def get_all_phis_and_sampleRate(project_path):
@@ -115,7 +114,10 @@ def create_QP_means(project_path, phi_sweep, targetDevPower, numModes=2, sampleR
         
         set_qt_backend()
         h = qp.plotComplexHist(data[0],data[1],figsize=[8,8])
-        plt.title(f'PHI = {phi:.3f}')
+        try:
+            plt.title(f'PHI = {phi:.3f}')
+        except:
+            plt.title(f'PHI')
         means_guess = plt.ginput(numModes,timeout=120)
         figname = f"IQ_plot_P{phi:.3f}_M{numModes}_SR{sampleRateMHz}_DP{targetDevPower}_DA{attens[index]}".replace(".","p")
         plt.savefig(os.path.join(project_path, f'AnalysisResults\guessedMeans\Figures\{figname}.png'))
@@ -192,9 +194,11 @@ def update_metainfo(file):
     LOf = float(data["LO_frequency"])
     temp = float(data["Temperature"])
     sampleRate = int(float(data["Sample_Rate_MHz"]))
-    phi = float(data["PHI"])
+    try:
+        phi = float(data["PHI"])  
+    except:
+        phi = None
     durationSeconds = int(data["Acquisition_duration"])
-        
     with open("metainfo.json", "r") as jsonFile:
         data = json.load(jsonFile)
     
@@ -209,8 +213,11 @@ def update_metainfo(file):
 
 def get_phi_from_run(file):
     file = file.split(".")[0] + ".json"
-    return float(json.load(open(file))["PHI"])
-
+    try:
+        return float(json.load(open(file))["PHI"])
+    except:
+        return None
+    
 def get_temp_from_run(file):
     file = file.split(".")[0] + ".json"
     return float(json.load(open(file))["Temperature"])

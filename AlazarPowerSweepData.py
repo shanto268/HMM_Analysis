@@ -24,22 +24,21 @@ import sys
 import time
 import warnings
 
-import fitTools.quasiparticleFunctions as qp
 import h5py
 import matplotlib
 import matplotlib.colors
 import matplotlib.pyplot as plt
 import numpy as np
 import psutil
+import quasiparticleFunctions as qp
+from HMM_helper_functions import *
+from HMM_plotter_functions import *
 from hmmlearn import hmm
 from joblib import Parallel, delayed
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.patches import Ellipse
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from tqdm import tqdm, trange
-
-from HMM_helper_functions import *
-from HMM_plotter_functions import *
 
 # GPU acceleration is disabled by default - set to True only if you have cuML properly installed
 USE_GPU = False
