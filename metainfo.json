@@ -1,16 +1,16 @@
 {
-    "dateOfMeasurement": 20221013,
+    "dateOfMeasurement": 20250313,
     "eccosorb": "True",
-    "KandL": "True",
+    "KandL": "False",
     "rigidCables": "True",
-    "JPA": "True",
+    "JPA": "False",
     "TWPA": "True",
     "ClearingCoupler": "False",
-    "Device_id": "NBR07",
-    "f0": 4.2727,
-    "Temp": 30.0,
+    "Device_id": "NBRL1A",
+    "f0": 5.7807,
+    "Temp": 25.0,
     "sampleRateMHz": 10,
-    "durationSeconds": 5,
-    "LOf": 4.290536280432348,
-    "phi": 0.31999999999999984
+    "durationSeconds": 30,
+    "LOf": 5.74813,
+    "phi": 0.4
 }

@@ -1,7 +1,7 @@
 import glob
+import os
 import subprocess
 
-import fitTools.quasiparticleFunctions as qp
 import h5py
 import matplotlib.pyplot as plt
 import numpy as np
@@ -10,6 +10,7 @@ from scipy.optimize import curve_fit, leastsq
 from scipy.signal import oaconvolve, savgol_filter, windows
 
 import HMM_helper_functions as hmm_func
+import quasiparticleFunctions as qp
 
 
 def weightedExp(t,a,tau):
@@ -74,20 +75,64 @@ def PlotWeightedExpDecay(dist,bins=100):
 
 
 def create_lifetime_distribution(hdf5_file, figpath):
-    with h5py.File(hdf5_file,'r') as fb:
-        for key in list(fb.keys()):
+    try:
+        # Get the last key to use most recent data
+        with h5py.File(hdf5_file, 'r') as fb:
+            keys = list(fb.keys())
+            if not keys:
+                print("No data found in HDF5 file for lifetime distribution")
+                return
+                
+            # Try to get data from the last key (most recent attenuation)
+            key = keys[-1]
             try:
                 nEst = fb[key]['Q'][:]
                 sampleRate = fb[key].attrs.get('downsampleRateMHz')
-            except:
-                pass
-    time = np.arange(len(nEst)) / sampleRate
-    lifetimes_dict = qp.extractLifetimes(nEst,time)
-    for key,value in lifetimes_dict.items():
-        qp.fitAndPlotExpDecay(value)
-        plt.title(f"QP Mode: {key}")
-        plt.savefig(figpath+"/"+f"lifetime_of_{key}_qp_distribution.png")
-        plt.close()
+                
+                # Verify we have enough data
+                if len(nEst) == 0:
+                    print(f"Empty Q data found in {key}")
+                    return
+                    
+                print(f"Using data from {key} for lifetime distribution with {len(nEst)} points")
+            except Exception as e:
+                print(f"Error reading data from {key}: {str(e)}")
+                return
+                
+        # Proceed with lifetime calculation
+        time = np.arange(len(nEst)) / sampleRate
+        lifetimes_dict = qp.extractLifetimes(nEst, time)
+        
+        # Check if we got any lifetimes
+        if not lifetimes_dict:
+            print("No lifetimes extracted from data")
+            return
+            
+        # Create the plots for each mode
+        for key, value in lifetimes_dict.items():
+            # Skip if no transitions were found for this mode
+            if len(value) == 0:
+                print(f"No transitions found for mode {key}")
+                continue
+                
+            # Create the plot
+            plt.figure(figsize=(8, 6))
+            qp.fitAndPlotExpDecay(value)
+            plt.title(f"QP Mode: {key}")
+            plt.grid(True, alpha=0.3)
+            
+            # Ensure directory exists
+            os.makedirs(figpath, exist_ok=True)
+            
+            # Save the figure
+            save_path = os.path.join(figpath, f"lifetime_of_{key}_qp_distribution.png")
+            plt.savefig(save_path)
+            plt.close()
+            print(f"Saved lifetime distribution for mode {key} to {save_path}")
+    except Exception as e:
+        print(f"Error in create_lifetime_distribution: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 def fitAndPlotWeightedExpDecay(dist,key,cut=None,bins=100,figsize=[3.325,3.325]):
     if cut is None:
@@ -115,19 +160,63 @@ def fitAndPlotWeightedExpDecay(dist,key,cut=None,bins=100,figsize=[3.325,3.325])
     plt.title("QP Mode: {} | {}".format(key, fitstring))
 
 def create_weighted_lifetime_distribution(hdf5_file, figpath, numModes):
-    with h5py.File(hdf5_file,'r') as fb:
-        for key in list(fb.keys()):
-            try:           
+    try:
+        # Get the last key to use most recent data
+        with h5py.File(hdf5_file, 'r') as fb:
+            keys = list(fb.keys())
+            if not keys:
+                print("No data found in HDF5 file for weighted lifetime distribution")
+                return
+                
+            # Try to get data from the last key (most recent attenuation)
+            key = keys[-1]
+            try:
                 nEst = fb[key]['Q'][:]
                 sampleRate = fb[key].attrs.get('downsampleRateMHz')
-            except:
-                pass
-    time = np.arange(len(nEst)) / sampleRate
-    lifetimes_dict = qp.extractLifetimes(nEst,time)
-    for key,value in lifetimes_dict.items():
-        fitAndPlotWeightedExpDecay(value,key)
-        plt.savefig(figpath+"/"+f"weighted_lifetime_of_{key}_qp_distribution.png")
-        plt.close()
+                
+                # Verify we have enough data
+                if len(nEst) == 0:
+                    print(f"Empty Q data found in {key}")
+                    return
+                    
+                print(f"Using data from {key} for weighted lifetime distribution with {len(nEst)} points")
+            except Exception as e:
+                print(f"Error reading data from {key}: {str(e)}")
+                return
+        
+        # Proceed with lifetime calculation
+        time = np.arange(len(nEst)) / sampleRate
+        lifetimes_dict = qp.extractLifetimes(nEst, time)
+        
+        # Check if we got any lifetimes
+        if not lifetimes_dict:
+            print("No lifetimes extracted from data")
+            return
+            
+        # Create the plots for each mode
+        for key, value in lifetimes_dict.items():
+            # Skip if no transitions were found for this mode
+            if len(value) == 0:
+                print(f"No transitions found for mode {key}")
+                continue
+                
+            # Create the plot
+            plt.figure(figsize=(8, 6))
+            fitAndPlotWeightedExpDecay(value, key)
+            plt.grid(True, alpha=0.3)
+            
+            # Ensure directory exists
+            os.makedirs(figpath, exist_ok=True)
+            
+            # Save the figure
+            save_path = os.path.join(figpath, f"weighted_lifetime_of_{key}_qp_distribution.png")
+            plt.savefig(save_path)
+            plt.close()
+            print(f"Saved weighted lifetime distribution for mode {key} to {save_path}")
+    except Exception as e:
+        print(f"Error in create_weighted_lifetime_distribution: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 def create_HMM_QP_statistics_plots(hdf5_file, figpath, numModes):
     hmm_func.set_plot_style()

@@ -1,18 +1,31 @@
-import subprocess
-from hmmlearn import hmm
-import numpy as np
-import matplotlib.pyplot as plt
-import fitTools.quasiparticleFunctions as qp
-from mpl_toolkits.axes_grid1 import make_axes_locatable
-from matplotlib.backends.backend_pdf import PdfPages
-import h5py
+# -*- coding: utf-8 -*-
+"""
+Created on Fri Aug 26 09:25:37 2022
+
+@author: shanto
+"""
+
+# Standard library imports
 import glob
+import json
 import os
 import pickle
-import json
-import matplotlib
-import AlazarPowerSweepData as alazar
+import re
+import subprocess
+import sys
+
+# Custom modules
+import fitTools.quasiparticleFunctions as qp
+# Third-party imports
+import h5py
+import matplotlib.colors
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from matplotlib.backends.backend_pdf import PdfPages
+
 from HMM_plotter_functions import *
+
 
 def get_all_phis_and_sampleRate(project_path):
     flux_sweeps = get_all_project_folders(project_path)
@@ -264,28 +277,104 @@ def sort_files_ascending_attenuation(files):
 
 
 def create_IQ_downsampled_plots(files, attens, base_dir, avgTime=2, sampleTime=10):
-    pdfName = '{}/IQ_downsampled_plots_{}_{}.pdf'.format(base_dir, avgTime, sampleTime)
-
-    pp = PdfPages(pdfName)
-    for i,file in enumerate(files):
-        data = qp.loadAlazarData(file)
-        data = qp.BoxcarDownsample(data,avgTime,sampleTime)
-        data = qp.uint16_to_mV(data)
-
-        qp.plotComplexHist(data[0],data[1])
-        plt.title(f'Atten = {attens[i]} dB')
-        # plt.show()
-        pp.savefig(plt.gcf())            #Save each figure in pdf
-        plt.close()
-
-    pp.close()                           #close the pdf
-
-    # os.startfile(pdfName)
-
-    subprocess.Popen([pdfName],shell=True)
-    print("\nPlease review the downsampled IQ plots - {}".format(pdfName))
+    """
+    Create downsampled IQ plots for each file.
+    
+    Args:
+        files (list): List of data files
+        attens (list): List of attenuation values
+        base_dir (str): Base directory for saving plots
+        avgTime (float): Time in microseconds to average data for downsampling
+        sampleTime (float): Sample time in seconds
+    """
+    try:
+        print(f"Creating downsampled IQ plots in {base_dir}...")
+        for i, (file, atten) in enumerate(zip(files, attens)):
+            try:
+                # Load and downsample data
+                data = qp.loadAlazarData(file)
+                sampleRateFromData = get_sample_rate_from_run(file)
+                data, sr = qp.BoxcarDownsample(data, avgTime, sampleRateFromData, returnRate=True)
+                data = qp.uint16_to_mV(data)
+                
+                # Create plot with direct matplotlib commands
+                fig, ax = plt.subplots(figsize=(8, 8))
+                
+                # Create 2D histogram
+                h = ax.hist2d(data[0], data[1], bins=80, 
+                           norm=matplotlib.colors.LogNorm(), 
+                           cmap=plt.cm.Greys)
+                plt.colorbar(h[3], ax=ax, shrink=0.9, extend='both')
+                
+                # Add grid and set aspect ratio
+                ax.grid(True)
+                ax.set_aspect('equal')
+                
+                # Add labels and title
+                ax.set_xlabel('I [mV]', fontsize=12)
+                ax.set_ylabel('Q [mV]', fontsize=12)
+                ax.set_title(f'I-Q Plot | Attenuation: {atten} | Sample Rate: {sr:.2f} MHz', fontsize=14)
+                
+                # Use subplots_adjust instead of tight_layout
+                plt.subplots_adjust(right=0.85, top=0.9, bottom=0.1, left=0.1)
+                
+                # Save the figure
+                plt.savefig(os.path.join(base_dir, f'iq_plot_{i}_atten{atten}.png'), 
+                          bbox_inches='tight', dpi=150)
+                plt.close(fig)
+                
+                print(f"Created IQ plot for attenuation {atten} ({i+1}/{len(files)})")
+            except Exception as e:
+                print(f"Error creating plot for attenuation {atten}: {str(e)}")
+                plt.close('all')  # Make sure to close any open plots on error
+                
+    except Exception as e:
+        print(f"Error in create_IQ_downsampled_plots: {str(e)}")
+        plt.close('all')
 
 
 def create_IQ_plot(data):
-    qp.plotComplexHist(data[0],data[1])
-    plt.show()
+    """Create an IQ plot for manual mean selection with improved error handling.
+    
+    Args:
+        data: IQ data to plot
+        
+    Returns:
+        None, displays a plot for interaction
+    """
+    try:
+        # Create figure with explicit dimensions
+        plt.figure(figsize=(10, 10))
+        
+        # Create a 2D histogram rather than using plotComplexHist
+        # This gives us more direct control over the plot
+        h = plt.hist2d(data[0], data[1], bins=80, 
+                     norm=matplotlib.colors.LogNorm(), 
+                     cmap=plt.cm.Greys)
+        plt.colorbar(h[3], shrink=0.9, extend='both')
+        
+        # Add grid and set aspect ratio
+        plt.grid(True)
+        plt.gca().set_aspect('equal')
+        
+        # Add labels and title
+        plt.xlabel('I [mV]', fontsize=12)
+        plt.ylabel('Q [mV]', fontsize=12)
+        plt.title('Click to select initial means for each state', fontsize=14)
+        
+        # Use subplots_adjust instead of tight_layout
+        plt.subplots_adjust(right=0.9, top=0.9, bottom=0.1, left=0.1)
+        
+        # Display the plot
+        plt.show()
+    except Exception as e:
+        print(f"Error creating IQ plot: {str(e)}")
+        plt.close('all')
+        # If plotting fails, create a minimal fallback plot
+        plt.figure(figsize=(10, 10))
+        plt.scatter(data[0], data[1], s=1, alpha=0.5)
+        plt.xlabel('I [mV]')
+        plt.ylabel('Q [mV]')
+        plt.title('Fallback plot - click to select initial means')
+        plt.grid(True)
+        plt.show()
