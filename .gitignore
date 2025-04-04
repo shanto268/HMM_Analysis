@@ -5,3 +5,15 @@ workspace.xml
 __pycache__/
 .vscode
 *.pyc
+simulation_data/res.pkl
+simulation_data/trapper.pkl
+rates.ipynb
+testHMMpower_simdata.ipynb
+simulation_data/barthannERROR_MEAN.png
+simulation_data/blackmanharrisERROR_MEAN.png
+simulation_data/boxcarERROR_MEAN.png
+simulation_data/flattopERROR_MEAN.png
+simulation_data/gaussianERROR_MEAN.png
+simulation_data/hannERROR_MEAN.png
+simulation_data/tukeyERROR_MEAN.png
+data.ipynb

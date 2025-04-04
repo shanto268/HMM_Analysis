@@ -658,6 +658,24 @@ class AlazarPowerSweepData:
             warnings.warn(f"Unknown covariance type '{covariance_type}'. Using 'full' covariance instead.")
             return covars
 
+    def _ensure_positive_definite(self, covariance, min_eigenval=1e-6):
+        """
+        Ensure covariance matrix is positive definite by adding small values to diagonal if needed.
+        
+        Args:
+            covariance: The covariance matrix to check/fix
+            min_eigenval: Minimum eigenvalue to ensure positive definiteness
+            
+        Returns:
+            Modified covariance matrix that is positive definite
+        """
+        eigenvals, eigenvecs = np.linalg.eigh(covariance)
+        if np.min(eigenvals) < min_eigenval:
+            # Add small positive value to diagonal to ensure positive definiteness
+            delta = min_eigenval - np.min(eigenvals)
+            covariance += np.eye(covariance.shape[0]) * (delta + 1e-6)
+        return covariance
+
     def start_HMM_fit(self, intTime=1, SNRmin=3, targetPower=None, numModes=2, n_jobs=None, 
                      covariance_type=None, n_iter=None, tol=None, verbose=None, transition_model=None,
                      fast_mode=False, auto_means=False, sort_states=True):
@@ -932,7 +950,24 @@ class AlazarPowerSweepData:
                 # Fit the model
                 print(f"Fitting HMM for attenuation {atten}...")
                 fit_start_time = time.time()
-                M.fit(hmm_data)
+                try:
+                    M.fit(hmm_data)
+                    fit_success = True
+                except Exception as e:
+                    print(f"Error in HMM fitting: {str(e)}")
+                    # Try to recover by adding regularization to covariances
+                    try:
+                        if self.hmm_params['covariance_type'] == 'full':
+                            for i in range(n_comp):
+                                M.covars_[i] = self._ensure_positive_definite(M.covars_[i], min_eigenval=1e-4)
+                        M.fit(hmm_data)
+                        fit_success = True
+                        print("Successfully recovered from fitting error with regularization")
+                    except Exception as e2:
+                        print(f"Could not recover from fitting error: {str(e2)}")
+                        fit_success = False
+                        return None
+                
                 fit_duration = time.time() - fit_start_time
                 print(f"The HMM fitting has been completed for attenuation {atten} in {fit_duration:.2f} seconds")
             except Exception as e:
@@ -1175,22 +1210,21 @@ class AlazarPowerSweepData:
                 print(f"Warning: Error creating I-Q by state plot: {str(e)}")
                 plt.close('all')  # Close any open figures
             
-            # Save remaining plots with separate try-except blocks for robustness
-            
-            # Get transition rates
+            # Calculate transition rates BEFORE saving to HDF5
             try:
                 rates = qp.getTransRatesFromProb(sr, M.transmat_)
+                print(f"Calculated transition rates for attenuation {atten}")
             except Exception as e:
                 print(f"Error calculating transition rates: {str(e)}")
                 rates = np.ones((n_comp, n_comp)) * 0.001  # Default rates if calculation fails
             
-            # Save results to HDF5 (moved after calculating 'rates')
+            # Now save results to HDF5
             try:
                 with h5py.File(savefile, 'a') as ff:
                     fp = ff.require_group(f'ATTEN{atten}')
                     fp.create_dataset('Q', data=Q)
                     fp.create_dataset('data', data=data)
-                    fp.create_dataset('transitionRatesMHz', data=rates)
+                    fp.create_dataset('transitionRatesMHz', data=rates)  # Now rates is defined
                     fp.attrs.create('logprobQ', logprob)
                     fp.attrs.create('mean', Qmean)
                     
@@ -1211,13 +1245,6 @@ class AlazarPowerSweepData:
                         fp.attrs.create(key, metainfo[key])
             except Exception as e:
                 print(f"Error saving results to HDF5: {str(e)}")
-            
-            # Get transition rates
-            try:
-                rates = qp.getTransRatesFromProb(sr, M.transmat_)
-            except Exception as e:
-                print(f"Error calculating transition rates: {str(e)}")
-                rates = np.ones((n_comp, n_comp)) * 0.001  # Default rates if calculation fails
             
             # Save HMM model parameters as .npz file
             try:
