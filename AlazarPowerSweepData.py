@@ -535,7 +535,7 @@ class AlazarPowerSweepData:
         update_metainfo(self.files[0])
 
         self.sampleRateFromData = get_sample_rate_from_run(self.files[0])
-        self.phi = get_phi_from_run(self.files[0])
+        self.phi = get_phi_from_run(self.files[0]) 
         self.temp = get_temp_from_run(self.files[0])
 
         if plots:

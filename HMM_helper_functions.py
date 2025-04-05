@@ -22,8 +22,9 @@ import matplotlib.colors
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from HMM_plotter_functions import *
 from matplotlib.backends.backend_pdf import PdfPages
+
+from HMM_plotter_functions import *
 
 
 def get_all_phis_and_sampleRate(project_path):
@@ -216,9 +217,9 @@ def update_metainfo(file):
 def get_phi_from_run(file):
     file = file.split(".")[0] + ".json"
     try:
-        return float(json.load(open(file))["PHI"])
+        return float(json.load(open(file))["Flux_bias_(Phi)"])
     except:
-        return None
+        return float(json.load(open(file))["PHI"])
     
 def get_temp_from_run(file):
     file = file.split(".")[0] + ".json"
@@ -389,4 +390,5 @@ def create_IQ_plot(data):
         plt.ylabel('Q [mV]')
         plt.title('Fallback plot - click to select initial means')
         plt.grid(True)
+        plt.show()
         plt.show()
