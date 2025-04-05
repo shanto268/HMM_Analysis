@@ -22,9 +22,8 @@ import matplotlib.colors
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.backends.backend_pdf import PdfPages
-
 from HMM_plotter_functions import *
+from matplotlib.backends.backend_pdf import PdfPages
 
 
 def get_all_phis_and_sampleRate(project_path):
@@ -193,7 +192,10 @@ def update_metainfo(file):
     file = file.split(".")[0] + ".json"
     data = json.load(open(file))
     LOf = float(data["LO_frequency"])
-    temp = float(data["Temperature"])
+    try:
+        temp = float(data["Temperature_MXC"])
+    except:
+        temp = float(data["Temperature"])
     sampleRate = int(float(data["Sample_Rate_MHz"]))
     try:
         phi = float(data["PHI"])  
@@ -202,7 +204,6 @@ def update_metainfo(file):
     durationSeconds = int(data["Acquisition_duration"])
     with open("metainfo.json", "r") as jsonFile:
         data = json.load(jsonFile)
-    
     data["Temp"] = temp
     data["sampleRateMHz"] = sampleRate
     data["durationSeconds"] = durationSeconds
@@ -221,7 +222,10 @@ def get_phi_from_run(file):
     
 def get_temp_from_run(file):
     file = file.split(".")[0] + ".json"
-    return float(json.load(open(file))["Temperature"])
+    try:
+        return float(json.load(open(file))["Temperature_MXC"])
+    except:
+        return float(json.load(open(file))["Temperature"])
 
 def get_sample_rate_from_run(file):
     file = file.split(".")[0] + ".json"

@@ -2,7 +2,7 @@ NBR07*.ipynb
 test/*
 data/*
 workspace.xml
-__pycache__/
+__pycache__
 .vscode
 *.pyc
 simulation_data/res.pkl
@@ -17,3 +17,11 @@ simulation_data/gaussianERROR_MEAN.png
 simulation_data/hannERROR_MEAN.png
 simulation_data/tukeyERROR_MEAN.png
 data.ipynb
+__pycache__/AlazarPowerSweepData.cpython-38.pyc
+__pycache__/AlazarPowerSweepData.cpython-38.pyc
+__pycache__/HMM_helper_functions.cpython-38.pyc
+__pycache__/HMM_plotter_functions.cpython-38.pyc
+__pycache__/AlazarPowerSweepData.cpython-38.pyc
+__pycache__/HMM_helper_functions.cpython-38.pyc
+__pycache__/HMM_plotter_functions.cpython-38.pyc
+__pycache__/*.*
