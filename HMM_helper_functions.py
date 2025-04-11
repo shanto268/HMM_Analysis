@@ -287,7 +287,36 @@ def sort_files_ascending_attenuation(files):
     attens = np.flip(attens,0)
     return files, np.array(attens)
 
+def get_IQ_data(files, avgTime=2):
+    """
+    Load and process IQ data from a file without plotting.
+    
+    Args:
+        files (list): List of data files
+        avgTime (float): Time in microseconds to average data for downsampling
+        
+    Returns:
+        tuple: (data, sr) where data is the processed IQ data in mV and sr is the sample rate in MHz,
+               or (None, None) if an error occurs
+    """
+    all_data = []
+    all_sr = []
+    
+    for file in files:
+        try:
+            # Load and downsample data
+            data = qp.loadAlazarData(file)
+            sampleRateFromData = get_sample_rate_from_run(file)
+            data, sr = qp.BoxcarDownsample(data, avgTime, sampleRateFromData, returnRate=True)
+            data = qp.uint16_to_mV(data)
+            
+            all_data.append(data)
+            all_sr.append(sr)
 
+        except Exception as e:
+            print(f"Error loading or processing data: {str(e)}")
+
+    return all_data, all_sr
 
 def create_IQ_downsampled_plots(files, attens, base_dir, avgTime=2, sampleTime=10):
     """

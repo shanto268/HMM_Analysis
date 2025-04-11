@@ -81,6 +81,8 @@ class AlazarPowerSweepData:
         self.phi = None
         self.temp = None
         self.num_cores = None
+        self.data = None
+        self.sr = None
         
         # HMM model parameters with defaults
         self.hmm_params = {
@@ -509,6 +511,36 @@ class AlazarPowerSweepData:
         self.sampleRateFromData = get_sample_rate_from_run(self.files[0])
         self.phi = get_phi_from_run(self.files[0])
         self.temp = get_temp_from_run(self.files[0])
+    
+    def get_voltage_records(self, avgTime=2):
+        """
+        Process Alazar data files and return voltage records.
+        
+        Args:
+            avgTime (float): Time in microseconds to average data for downsampling
+        """
+        
+        print("Setting up directories and paths...")
+        
+        # Ensure figure path exists
+        if not os.path.exists(self.figure_path):
+            os.makedirs(self.figure_path)
+            print(f"Created figure directory: {self.figure_path}")
+            
+        print("Reading and sorting data files...")
+        self.files, self.attens = sort_files_ascending_attenuation(self.files)
+        convert_to_json(self.files)
+
+        set_plot_style()
+        print("Reading and updating the metadata...")
+
+        update_metainfo(self.files[0])
+
+        self.sampleRateFromData = get_sample_rate_from_run(self.files[0])
+        self.phi = get_phi_from_run(self.files[0]) 
+        self.temp = get_temp_from_run(self.files[0])
+
+        self.data, self.sr = get_IQ_data(self.files, avgTime)
 
     def process_Alazar_Data(self, avgTime=2, plots=True):
         """
